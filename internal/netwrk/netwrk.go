@@ -1,18 +1,19 @@
 package netwrk
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"net"
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 )
 
 type Client struct {
-	name string
-	conn net.Conn
+	name  string
+	conn  net.Conn
+	ready bool
 }
 
 type ClientPool struct {
@@ -29,17 +30,12 @@ type GameConnections struct {
 }
 
 var clientPool *ClientPool
-var gameConnections *GameConnections
 
 // Starts listening on port 12345 for TCP connections
 // Also creates client pool and game connection singletons
 func Listen() {
 	clientPool = &ClientPool{
 		clients: map[string]Client{},
-	}
-
-	gameConnections = &GameConnections{
-		games: map[string]GameClients{},
 	}
 
 	listener, err := net.Listen("tcp", ":12345")
@@ -56,65 +52,110 @@ func Listen() {
 				log.Println(err)
 				continue
 			}
-
-			name := make([]byte, 1024)
-
-			n, err := conn.Read(name)
-			if err != nil {
-				log.Println(fmt.Sprintf("Failed to read from connection: %s", conn.LocalAddr()))
-			} else {
-				clientPool.clients[uuid.New().String()] = Client{
-					name: string(name[:n]),
-					conn: conn,
-				}
-			}
+			go handleLobbyConnection(conn)
 		}
 	}()
-
 }
 
-func handleLobbyConnection(connID string, conn net.Conn) {
+func handleGameConnection(conn net.Conn) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+
+	messageBytes := make([]byte, 126)
 
 	for {
-		message, err := reader.ReadString('\n')
+		n, err := conn.Read(messageBytes)
 		if err != nil {
 			log.Printf("Error reading message %v", err)
-			delete(clientPool.clients, connID)
 			return
 		}
 
-		handleLobbyMessage(message, conn)
+		if isDone, err := handleGameMessage(conn, messageBytes[:n]); err != nil {
+			return
+		}
 	}
 }
 
-func handleLobbyMessage(message string, conn net.Conn) {
+func handleGameMessage(conn net.Conn, message GameMessage) error {
 
-	key, data := decodeMessage(message)
-	switch message {
-	case "start":
-		break
-	case "waiting":
-		break
-	default:
-		clientPool.clients[message]
+	return nil
+}
+
+func handleLobbyConnection(conn net.Conn) {
+	defer conn.Close()
+
+	messageBytes := make([]byte, 4096)
+
+	for {
+		n, err := conn.Read(messageBytes)
+		if err != nil {
+			log.Printf("Error reading message %v", err)
+			return
+		}
+
+		if isDone, err := handleLobbyMessage(conn, messageBytes[:n]); err != nil || isDone {
+			return
+		}
 	}
 }
 
-func decodeLobbyMessage(message string) (string, any) {
-	switch message {
-	case "start":
-		return "start", nil
-	case "waiting":
-		return "waiting", nil
+// Returns a bool of whether the player has disconnected from the lobby and an error
+func handleLobbyMessage(playerConnection net.Conn, bytes []byte) (bool, error) {
+
+	message := LobbyMessage{}
+
+	err := proto.Unmarshal(bytes, &message)
+	if err != nil {
+		return false, fmt.Errorf("Invalid message received from client")
+	}
+
+	switch message.Type {
+	case "name":
+		clientPool.clients[uuid.New().String()] = Client{
+			name:  message.Content,
+			conn:  playerConnection,
+			ready: false,
+		}
+		break
+	case "invite_player":
+		invitee, ok := clientPool.clients[message.Content]
+		if !ok {
+			SendMessageToClient(playerConnection, &LobbyMessage{Type: "text", Content: "Sorry that player is not available..."})
+			return false, nil
+		}
+		SendMessageToClient(invitee.conn, &LobbyMessage{Type: "invite", Content: playerID})
+		return false, nil
+	case "cancel_invite":
+
+	case "accept_game":
+		AcceptGame(message.Content)
+		return true, nil
+	case "decline_game":
+		DeclineGame()
+		return false, nil
+	case "quit":
+		DeletePlayer(message.Content)
+		return true, nil
+	case "ping":
+		PongPlayer(message.Content)
+		return false, nil
 	default:
-	break
+		PongPlayer(message.Content)
+		return false, nil
 	}
+	return false, nil
 
-	strings
+}
 
+func SendMessageToClient(connection net.Conn, message *LobbyMessage) error {
+	bytes, err := proto.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("Error marshalling message. Your protobuf is wack yo.")
 	}
+	_, err = connection.Write(bytes)
+	if err != nil {
+		return fmt.Errorf("Error writing to client connection")
+	}
+	return nil
 }
 
 func GetPool() (map[string]Client, bool) {
@@ -150,13 +191,18 @@ func CreateGame(clientID1, clientID2 string) (string, error) {
 	return gameID, nil
 }
 
-func SendGameUpdateToClients(gameID string, bytes []byte) error {
+func SendGameUpdateToLobbyClients(gameID string, message *LobbyMessage) error {
 	clients, ok := gameConnections.games[gameID]
 	if !ok {
 		return fmt.Errorf("Could not find game clients record")
 	}
 
-	_, err := clients.client1.conn.Write(bytes)
+	bytes, err := proto.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("message could not be marshalled")
+	}
+
+	_, err = clients.client1.conn.Write(bytes)
 	if err != nil {
 		return fmt.Errorf("Could not write to client1 connection")
 	}
