@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package main;
+
+option go_package = "../internal/netwrk";
+
+message LobbyMessage {
+  string type = 1;
+  string content = 2;
+}

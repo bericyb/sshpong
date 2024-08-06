@@ -1,6 +1,7 @@
 package netwrk
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -30,6 +31,8 @@ type GameConnections struct {
 var clientPool *ClientPool
 var gameConnections *GameConnections
 
+// Starts listening on port 12345 for TCP connections
+// Also creates client pool and game connection singletons
 func Listen() {
 	clientPool = &ClientPool{
 		clients: map[string]Client{},
@@ -70,6 +73,50 @@ func Listen() {
 
 }
 
+func handleLobbyConnection(connID string, conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	for {
+		message, err := reader.ReadString('\n')
+		if err != nil {
+			log.Printf("Error reading message %v", err)
+			delete(clientPool.clients, connID)
+			return
+		}
+
+		handleLobbyMessage(message, conn)
+	}
+}
+
+func handleLobbyMessage(message string, conn net.Conn) {
+
+	key, data := decodeMessage(message)
+	switch message {
+	case "start":
+		break
+	case "waiting":
+		break
+	default:
+		clientPool.clients[message]
+	}
+}
+
+func decodeLobbyMessage(message string) (string, any) {
+	switch message {
+	case "start":
+		return "start", nil
+	case "waiting":
+		return "waiting", nil
+	default:
+	break
+	}
+
+	strings
+
+	}
+}
+
 func GetPool() (map[string]Client, bool) {
 	if clientPool.clients != nil {
 		return clientPool.clients, true
@@ -99,9 +146,6 @@ func CreateGame(clientID1, clientID2 string) (string, error) {
 		client1: client1,
 		client2: client2,
 	}
-
-	delete(clientPool.clients, clientID1)
-	delete(clientPool.clients, clientID2)
 
 	return gameID, nil
 }
