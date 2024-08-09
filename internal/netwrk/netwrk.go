@@ -21,15 +21,16 @@ type ClientPool struct {
 }
 
 type GameClients struct {
-	client1 Client
-	client2 Client
+	client1 chan GameMessage
+	client2 chan GameMessage
 }
 
-type GameConnections struct {
+type GameChans struct {
 	games map[string]GameClients
 }
 
 var clientPool *ClientPool
+var gameChans *GameChans
 
 // Starts listening on port 12345 for TCP connections
 // Also creates client pool and game connection singletons
@@ -56,6 +57,10 @@ func Listen() {
 		}
 	}()
 
+	gameChans = &GameChans{
+		games: map[string]GameClients{},
+	}
+
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -63,9 +68,9 @@ func Listen() {
 				log.Println(err)
 				continue
 			}
-			go handleGameConnection(conn)
+			handleGameConnection(conn)
 		}
-	}
+	}()
 }
 
 func handleGameConnection(conn net.Conn) {
@@ -78,21 +83,26 @@ func handleGameConnection(conn net.Conn) {
 		log.Printf("Error reading game ID on connection", err)
 	}
 
-	gameID, err := string(messageBytes[:n])
+	gameID := string(messageBytes[:n])
 	if err != nil {
 		log.Printf("Game id was not a string?", err)
 	}
 
+	clientChan := make(chan GameMessage)
 
-	for {
-		n, err := conn.Read(messageBytes)
-		if err != nil {
-			log.Printf("Error reading message %v", err)
-			return
-		}
+	n, err := conn.Read(messageBytes)
+	if err != nil {
+		log.Printf("Error reading message %v", err)
+		return
+	}
 
-		if isDone, err := handleGameMessage(gameID, conn, messageBytes[:n]); err != nil {
-			return
+	gameID := messageBytes[:n]
+
+	clientChan, ok := gameChans[gameID]
+	if !ok {
+		GameClients{
+			client1: clientChan,
+			client2: nil,
 		}
 	}
 }

@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package netwrk;
+
+option go_package = "./netwrk";
+
+message GameMessage {
+  string action = 1;
+  int32 value = 2;
+}

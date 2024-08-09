@@ -1,8 +1,7 @@
 syntax = "proto3";
 
-package main;
-
-option go_package = "../internal/netwrk";
+package netwrk.v1;
+option go_package = "./netwrk";
 
 message LobbyMessage {
   string type = 1;
