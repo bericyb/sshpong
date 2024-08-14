@@ -4,6 +4,7 @@ package netwrk.v1;
 option go_package = "./netwrk";
 
 message LobbyMessage {
-  string type = 1;
-  string content = 2;
+  string player_id = 1;
+  string type = 2;
+  string content = 3;
 }
