@@ -34,7 +34,7 @@ func Listen() {
 		clients: map[string]Client{},
 	}
 
-	listener, err := net.Listen("tcp", ":12345")
+	listener, err := net.Listen("tcp", "127.0.0.1:12345")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,6 +44,7 @@ func Listen() {
 	go func() {
 		for {
 			conn, err := listener.Accept()
+			log.Println("got a connection!")
 			if err != nil {
 				log.Println(err)
 				continue
@@ -56,20 +57,18 @@ func Listen() {
 		games: map[string]GameClients{},
 	}
 
-	gameListener, err := net.Listen("tcp", ":42069")
+	gameListener, err := net.Listen("tcp", "127.0.0.1:42069")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	defer gameListener.Close()
-	go func() {
-		for {
-			conn, err := gameListener.Accept()
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			handleGameConnection(conn)
+	for {
+		conn, err := gameListener.Accept()
+		if err != nil {
+			log.Println(err)
+			continue
 		}
-	}()
+		handleGameConnection(conn)
+	}
 }

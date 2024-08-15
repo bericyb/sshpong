@@ -1,0 +1,11 @@
+- Get a lobby going
+	- Join lobby
+	- See other players in lobby
+	- Leave lobby and update 
+	- Send invite and accept
+- Get a game going
+	- Both players in game
+	- Send messsage back and forth
+	- End game and go back to lobby
+
+
