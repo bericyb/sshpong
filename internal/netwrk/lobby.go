@@ -1,7 +1,6 @@
 package netwrk
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -14,15 +13,16 @@ func handleLobbyConnection(conn net.Conn) {
 
 	messageBytes := make([]byte, 4096)
 
-	recvMessageChan := make(chan *LobbyMessage)
+	ingress := make(chan *LobbyMessage)
+	egress := make(chan *LobbyMessage)
+
+	// Network Reader
 	go func() {
 		for {
-			fmt.Println("READING!")
 			n, err := conn.Read(messageBytes)
 			if err == io.EOF {
 				return
 			}
-			fmt.Println("READ something!")
 			if err != nil {
 				log.Printf("Error reading message %v", err)
 				return
@@ -32,106 +32,103 @@ func handleLobbyConnection(conn net.Conn) {
 
 			err = proto.Unmarshal(messageBytes[:n], &message)
 			if err != nil {
-				log.Println("Invalid message received from client")
+				log.Println("Invalid message received from client", err)
 			}
-			recvMessageChan <- &message
+			ingress <- &message
 		}
 	}()
 
-	for {
-
-		select {
-		case msg := <-recvMessageChan:
-			if isDone, err := handleClientLobbyMessage(conn, msg); err != nil || isDone {
-				log.Println(err)
-				return
+	// Network Writer
+	go func() {
+		for {
+			msg := <-egress
+			bytes, err := proto.Marshal(msg)
+			if err != nil {
+				log.Println("Error marshalling message to send to user...", err)
 			}
-			fmt.Println("Handled message")
+			_, err = conn.Write(bytes)
+			if err == io.EOF {
+				log.Println("User has disconnected", err)
+				ingress <- &LobbyMessage{Type: "disconnect"}
+			}
+			if err != nil {
+				log.Println("Error writing to user...", err)
+			}
 		}
-	}
+	}()
+
+	// Client message handler
+	go func() {
+		for {
+			msg := <-ingress
+			serverMsg, err := handleClientLobbyMessage(msg)
+			if err != nil {
+				log.Println("Error handling client lobby message...", err)
+			}
+			if serverMsg != nil {
+				egress <- serverMsg
+			}
+		}
+	}()
 }
 
 // Returns a bool of whether the player has disconnected from the lobby and an error
-func handleClientLobbyMessage(playerConnection net.Conn, message *LobbyMessage) (bool, error) {
+func handleClientLobbyMessage(message *LobbyMessage) (*LobbyMessage, error) {
 	switch message.Type {
 	case "name":
-		_, ok := clientPool.clients[message.Content]
+		_, ok := lobbyMembers.Load(message.Content)
 		if ok {
-			SendMessageToClient(playerConnection, &LobbyMessage{Type: "error", Content: "Sorry, that name is already taken"})
-			return false, nil
+			return &LobbyMessage{Type: "name_error", Content: "Sorry, that name is already taken, please try a different name"}, nil
 		}
-		playerID := message.Content
-		clientPool.clients[playerID] = Client{
-			name:  playerID,
-			conn:  playerConnection,
-			ready: false,
-		}
-		for _, player := range clientPool.clients {
-			err := SendMessageToClient(playerConnection, &LobbyMessage{PlayerId: player.name, Type: "connect", Content: player.name})
-			if err != nil {
-				log.Println("There was an error sending the list of lobby players to client", message.Content)
-			}
-		}
+		username := message.Content
+
+		// Send all client messages
+		lobbyMembers.Range(func(lobbyUsername string, client Client) bool {
+			externalMessageChan <- ExternalMessage{Target: username, Message: &LobbyMessage{Type: "connect", Content: lobbyUsername}}
+			return true
+		})
 
 		log.Println("Broadcasting new player", message.Content)
 
-		broadcastToLobby(&LobbyMessage{PlayerId: "", Type: "connect", Content: playerID})
+		broadcastToLobby(&LobbyMessage{PlayerId: "", Type: "connect", Content: username})
 
-		return false, SendMessageToClient(playerConnection, &LobbyMessage{PlayerId: playerID, Type: "name", Content: playerID})
+		return &LobbyMessage{PlayerId: username, Type: "name", Content: username}, nil
 	case "invite":
 		log.Println("Got invite for player:", message.Content)
-		invitee, ok := clientPool.clients[message.Content]
+		invitee, ok := lobbyMembers[message.Content]
 		if !ok {
-			SendMessageToClient(playerConnection, &LobbyMessage{Type: "text", Content: "Sorry, that player is not available..."})
-			return false, nil
+			return &LobbyMessage{Type: "text", Content: "Sorry, that player is not available..."}, nil
 		}
-		SendMessageToClient(invitee.conn, &LobbyMessage{Type: "invite", Content: message.PlayerId})
-		return false, nil
+		return &LobbyMessage{Type: "invite", Content: message.PlayerId}, nil
 	case "accept_game":
-		player := clientPool.clients[message.Content]
+		player := lobbyMembers[message.Content]
 
-		if err := SendMessageToClient(player.conn, &LobbyMessage{Type: "accept", Content: ""}); err != nil {
-			SendMessageToClient(playerConnection, &LobbyMessage{Type: "error", Content: "Sorry that game is no longer available..."})
-			return false, nil
-		}
+		return &LobbyMessage{Type: "accept", Content: ""}, nil
 
-		return true, nil
 	case "chat":
 		broadcastToLobby(&LobbyMessage{PlayerId: message.PlayerId, Type: "text", Content: message.Content})
-		return false, nil
+		return nil, nil
 	case "decline_game":
-		inviter := clientPool.clients[message.Content]
-		SendMessageToClient(inviter.conn, &LobbyMessage{Type: "decline_game", Content: message.PlayerId})
-		return false, nil
+		inviter := lobbyMembers[message.Content]
+		return &LobbyMessage{Type: "decline_game", Content: message.PlayerId}, nil
 	case "quit":
-		delete(clientPool.clients, message.PlayerId)
+		delete(lobbyMembers, message.PlayerId)
 		broadcastToLobby(&LobbyMessage{Type: "disconnect", Content: message.PlayerId})
-		return true, nil
+		return nil, nil
 	case "ping":
-		SendMessageToClient(playerConnection, &LobbyMessage{Type: "pong", Content: "pong"})
-		return false, nil
+		return &LobbyMessage{Type: "pong", Content: "pong"}, nil
 	default:
-		SendMessageToClient(playerConnection, &LobbyMessage{Type: "pong", Content: "pong"})
-		return false, nil
+		return &LobbyMessage{Type: "pong", Content: "pong"}, nil
 	}
-}
-
-func SendMessageToClient(connection net.Conn, message *LobbyMessage) error {
-	bytes, err := proto.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("Error marshalling message. Your protobuf is wack yo.")
-	}
-	_, err = connection.Write(bytes)
-	if err != nil {
-		return fmt.Errorf("Error writing to client connection")
-	}
-	fmt.Println("Sent message to client")
-	return nil
 }
 
 func broadcastToLobby(message *LobbyMessage) {
-	for _, player := range clientPool.clients {
-		err := SendMessageToClient(player.conn, message)
+	for _, player := range lobbyMembers {
+		bytes, err := proto.Marshal(message)
+		if err != nil {
+			log.Println("Error marshalling broadcast message", err)
+		}
+		_, err = player.Conn.Write(bytes)
 		if err != nil {
 			log.Println("Error broadcasting to clients...", err)
 		}

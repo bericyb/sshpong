@@ -1,95 +1,107 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"sshpong/internal/client"
 	"sshpong/internal/netwrk"
-	"strings"
+
+	"google.golang.org/protobuf/proto"
 )
 
+var exit chan bool
+
 func main() {
-
-	lobbyChan := make(chan netwrk.LobbyPlayerStatus)
-	interrupter := make(chan netwrk.Interrupter)
-	messageOutput := make(chan *netwrk.LobbyMessage)
-	inputChan := make(chan string)
-
 	fmt.Println("Welcome to sshpong!")
 	fmt.Println("Please enter your username")
 
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			text := scanner.Text()
-			inputChan <- text
-		}
-	}()
-
-	reader := bufio.NewReader(os.Stdin)
-	username, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Println("Error reading from your shit bro...")
-	}
-
-	go netwrk.ConnectToLobby(username, messageOutput, lobbyChan, interrupter)
+	egress := make(chan *netwrk.LobbyMessage)
+	ingress := make(chan *netwrk.LobbyMessage)
 
 	buf := make([]byte, 1024)
+	n, err := os.Stdin.Read(buf)
+	if err != nil {
+		log.Panic("Bro your input is no good...")
+	}
+	username := string(buf[:n])
 
-	for {
-		select {
-		case msg := <-interrupter:
-			fmt.Println(msg.Message)
-		default:
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				fmt.Println("Error reading from stdin")
-				return
-			}
-
-			input := string(buf[:n])
-			args := strings.Fields(input)
-			switch args[0] {
-			case "invite":
-				if args[1] != "" {
-					messageOutput <- &netwrk.LobbyMessage{
-						PlayerId: username,
-						Type:     "invite",
-						Content:  args[1],
-					}
-				} else {
-					fmt.Println("Please provide a player to invite ")
-				}
-			case "chat":
-				if args[1] != "" {
-					messageOutput <- &netwrk.LobbyMessage{
-						PlayerId: username,
-						Type:     "chat",
-						Content:  strings.Join(args[1:], " "),
-					}
-				}
-			case "/":
-				if args[1] != "" {
-					messageOutput <- &netwrk.LobbyMessage{
-						PlayerId: username,
-						Type:     "chat",
-						Content:  strings.Join(args[1:], " "),
-					}
-				}
-			case "quit":
-				return
-			case "q":
-				return
-			case "help":
-				fmt.Println("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
-			case "h":
-				fmt.Println("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
-			default:
-				fmt.Println("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
-			}
-
-		}
-
+	conn, err := netwrk.ConnectToLobby(username)
+	if err != nil {
+		log.Panic(err)
 	}
 
+	// User input handler
+	go func(egress chan *netwrk.LobbyMessage) {
+		buf := make([]byte, 1024)
+		for {
+
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				log.Panic("Bro your input wack as fuck")
+			}
+
+			userMessage, err := client.HandleUserInput(buf[:n])
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+
+			userMessage.PlayerId = username
+			egress <- userMessage
+		}
+	}(egress)
+
+	// Ingress Handler
+	go func(oc chan *netwrk.LobbyMessage) {
+		for {
+			msg := <-ingress
+
+			client.HandleServerMessage(msg)
+		}
+
+	}(ingress)
+
+	// Network writer
+	go func(userMessages chan *netwrk.LobbyMessage) {
+		for {
+			msg := <-userMessages
+			bytes, err := proto.Marshal(msg)
+			if err != nil {
+				log.Panic("Malformed proto message", err)
+			}
+			_, err = conn.Write(bytes)
+			if err == io.EOF {
+				log.Panic("Server disconnected sorry...")
+			} else if err != nil {
+				log.Panic("Error reading from server connection...")
+			}
+		}
+	}(egress)
+
+	// Network reader
+	go func(serverMessages chan *netwrk.LobbyMessage) {
+		buf := make([]byte, 1024)
+		for {
+			n, err := conn.Read(buf)
+			if err == io.EOF {
+				log.Panic("Server disconnected sorry...")
+			} else if err != nil {
+				log.Panic("Error reading from server connection...")
+			}
+
+			message := &netwrk.LobbyMessage{}
+
+			err = proto.Unmarshal(buf[:n], message)
+			if err != nil {
+				log.Panic("Error reading message from server")
+			}
+
+			serverMessages <- message
+
+		}
+	}(ingress)
+
+	_ = <-exit
 }

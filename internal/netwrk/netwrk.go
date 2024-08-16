@@ -3,36 +3,40 @@ package netwrk
 import (
 	"log"
 	"net"
+	sync "sync"
 )
 
 type Client struct {
-	name  string
-	conn  net.Conn
-	ready bool
+	Username string
+	Conn     net.Conn
 }
 
-type ClientPool struct {
-	clients map[string]Client
+type LobbyPlayersMessage struct {
+	Type        string
+	Username    string
+	IsAvailable chan bool
 }
 
-type GameClients struct {
-	client1 chan GameMessage
-	client2 chan GameMessage
+type ExternalMessage struct {
+	Target  string
+	Message *LobbyMessage
 }
 
-type GameChans struct {
-	games map[string]GameClients
-}
+var lobbyListener chan LobbyPlayersMessage
+var externalMessageChan chan ExternalMessage
 
-var clientPool *ClientPool
-var gameChans *GameChans
+var lobbyMembers sync.Map
+
+func init() {
+	lobbyListener = make(chan LobbyPlayersMessage)
+	externalMessageChan = make(chan ExternalMessage)
+
+	lobbyMembers = sync.Map{}
+}
 
 // Starts listening on port 12345 for TCP connections
 // Also creates client pool and game connection singletons
-func Listen() {
-	clientPool = &ClientPool{
-		clients: map[string]Client{},
-	}
+func LobbyListen() {
 
 	listener, err := net.Listen("tcp", "127.0.0.1:12345")
 	if err != nil {
@@ -41,21 +45,18 @@ func Listen() {
 
 	defer listener.Close()
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			log.Println("got a connection!")
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			go handleLobbyConnection(conn)
+	for {
+		conn, err := listener.Accept()
+		log.Println("got a connection!")
+		if err != nil {
+			log.Println(err)
+			continue
 		}
-	}()
-
-	gameChans = &GameChans{
-		games: map[string]GameClients{},
+		go handleLobbyConnection(conn)
 	}
+}
+
+func GamesListen() {
 
 	gameListener, err := net.Listen("tcp", "127.0.0.1:42069")
 	if err != nil {
