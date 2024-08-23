@@ -8,9 +8,14 @@ import (
 	"strings"
 )
 
+var help = fmt.Errorf("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
+
 func HandleUserInput(buf []byte) (*netwrk.LobbyMessage, error) {
 	input := string(buf)
 	args := strings.Fields(input)
+	if len(args) == 0 {
+		return nil, help
+	}
 	switch args[0] {
 	case "invite":
 		if args[1] != "" {
@@ -40,11 +45,11 @@ func HandleUserInput(buf []byte) (*netwrk.LobbyMessage, error) {
 	case "q":
 		return nil, io.EOF
 	case "help":
-		return nil, fmt.Errorf("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
+		return nil, help
 	case "h":
-		return nil, fmt.Errorf("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
+		return nil, help
 	default:
-		return nil, fmt.Errorf("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
+		return nil, help
 	}
 	return nil, nil
 }

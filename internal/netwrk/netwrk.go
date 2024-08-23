@@ -4,6 +4,8 @@ import (
 	"log"
 	"net"
 	sync "sync"
+
+	"google.golang.org/protobuf/proto"
 )
 
 type Client struct {
@@ -32,6 +34,19 @@ func init() {
 	externalMessageChan = make(chan ExternalMessage)
 
 	lobbyMembers = sync.Map{}
+
+	go func() {
+		for {
+			msg := <-externalMessageChan
+			player, ok := lobbyMembers.Load(msg.Target)
+			if !ok {
+				continue
+			}
+			client, _ := player.(Client)
+			bytes, _ := proto.Marshal(msg.Message)
+			client.Conn.Write(bytes)
+		}
+	}()
 }
 
 // Starts listening on port 12345 for TCP connections

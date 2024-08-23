@@ -25,7 +25,7 @@ func main() {
 	if err != nil {
 		log.Panic("Bro your input is no good...")
 	}
-	username := string(buf[:n])
+	username := string(buf[:n-1])
 
 	conn, err := netwrk.ConnectToLobby(username)
 	if err != nil {
@@ -43,6 +43,9 @@ func main() {
 			}
 
 			userMessage, err := client.HandleUserInput(buf[:n])
+			if err == io.EOF {
+				exit <- true
+			}
 			if err != nil {
 				fmt.Println(err)
 				continue
@@ -88,7 +91,7 @@ func main() {
 			if err == io.EOF {
 				log.Panic("Server disconnected sorry...")
 			} else if err != nil {
-				log.Panic("Error reading from server connection...")
+				log.Panic("Error reading from server connection...", err)
 			}
 
 			message := &netwrk.LobbyMessage{}

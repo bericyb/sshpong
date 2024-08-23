@@ -10,7 +10,7 @@ var exit chan bool
 func main() {
 	fmt.Println("Starting sshpong server!")
 
-	netwrk.Listen()
+	netwrk.LobbyListen()
 
 	_ = <-exit
 }

@@ -15,12 +15,12 @@ func handleGameConnection(conn net.Conn) {
 		log.Printf("Error reading game ID on connection", err)
 	}
 
-	gameID := string(messageBytes[:n])
+	_ = string(messageBytes[:n])
 	if err != nil {
 		log.Printf("Game id was not a string?", err)
 	}
 
-	clientChan := make(chan GameMessage)
+	_ = make(chan GameMessage)
 
 	n, err = conn.Read(messageBytes)
 	if err != nil {
@@ -28,16 +28,6 @@ func handleGameConnection(conn net.Conn) {
 		return
 	}
 
-	gameClients, ok := gameChans.games[gameID]
-	if !ok {
-		newGameClients := GameClients{
-			client1: clientChan,
-			client2: nil,
-		}
-		gameChans.games[gameID] = newGameClients
-	} else {
-		gameClients.client2 = clientChan
-	}
 }
 
 func handleGameMessage(conn net.Conn, message *GameMessage) error {
