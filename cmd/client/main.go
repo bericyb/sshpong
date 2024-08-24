@@ -7,6 +7,7 @@ import (
 	"os"
 	"sshpong/internal/client"
 	"sshpong/internal/netwrk"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -19,6 +20,7 @@ func main() {
 
 	egress := make(chan *netwrk.LobbyMessage)
 	ingress := make(chan *netwrk.LobbyMessage)
+	interrupter := make(chan client.InterrupterMessage, 100)
 
 	buf := make([]byte, 1024)
 	n, err := os.Stdin.Read(buf)
@@ -42,17 +44,40 @@ func main() {
 				log.Panic("Bro your input wack as fuck")
 			}
 
-			userMessage, err := client.HandleUserInput(buf[:n])
-			if err == io.EOF {
-				exit <- true
-			}
-			if err != nil {
-				fmt.Println(err)
-				continue
-			}
+			input := string(buf[:n-1])
+			args := strings.Fields(input)
 
-			userMessage.PlayerId = username
-			egress <- userMessage
+			userMessage := &netwrk.LobbyMessage{}
+
+			select {
+			case msg := <-interrupter:
+				userMessage, err := client.HandleInterruptInput(msg, args)
+				if err != nil {
+					userMessage, err = client.HandleUserInput(args)
+					if err == io.EOF {
+						exit <- true
+					}
+					if err != nil {
+						fmt.Println(err)
+						continue
+					}
+				}
+				userMessage.PlayerId = username
+				egress <- userMessage
+
+			default:
+				userMessage, err = client.HandleUserInput(args)
+				if err == io.EOF {
+					exit <- true
+				}
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				userMessage.PlayerId = username
+				egress <- userMessage
+
+			}
 		}
 	}(egress)
 
@@ -61,7 +86,13 @@ func main() {
 		for {
 			msg := <-ingress
 
-			client.HandleServerMessage(msg)
+			interrupterMsg, err := client.HandleServerMessage(msg)
+			if err != nil {
+				log.Panic("Error handling server message disconnecting...")
+			}
+			if interrupterMsg.InterruptType != "" {
+				interrupter <- interrupterMsg
+			}
 		}
 
 	}(ingress)

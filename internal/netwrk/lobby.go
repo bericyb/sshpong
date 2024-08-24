@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -46,7 +47,6 @@ func handleLobbyConnection(conn net.Conn) {
 			if err != nil {
 				log.Println("Error marshalling message to send to user...", err)
 			}
-			log.Println("sending message to user!")
 			_, err = conn.Write(bytes)
 			if err == io.EOF {
 				conn.Close()
@@ -86,7 +86,6 @@ func handleClientLobbyMessage(message *LobbyMessage, conn net.Conn) (*LobbyMessa
 	// Send a connection message for each of the lobbyMembers to the new player
 	// Send a connection message to all members in the lobby
 	case "name":
-		log.Println("Got a name message!", message)
 		_, ok := lobbyMembers.Load(message.Content)
 		if ok {
 			return &LobbyMessage{Type: "name_error", Content: "Sorry, that name is already taken, please try a different name"}, nil
@@ -95,20 +94,17 @@ func handleClientLobbyMessage(message *LobbyMessage, conn net.Conn) (*LobbyMessa
 
 		lobbyMembers.Store(username, Client{Username: username, Conn: conn})
 
-		log.Println("Storing new user!")
-		// Send all client messages
+		// Build current lobby list
+		var lobby []string
 		lobbyMembers.Range(func(lobbyUsername any, client any) bool {
-			log.Println("ranging over users!")
 			usernameString, _ := lobbyUsername.(string)
-			externalMessageChan <- ExternalMessage{Target: username, Message: &LobbyMessage{Type: "connect", Content: usernameString}}
+			lobby = append(lobby, usernameString)
 			return true
 		})
 
-		log.Println("Broadcasting new player", message.Content)
-
 		broadcastToLobby(&LobbyMessage{PlayerId: "", Type: "connect", Content: username})
 
-		return &LobbyMessage{PlayerId: username, Type: "name", Content: username}, nil
+		return &LobbyMessage{PlayerId: username, Type: "name", Content: strings.Join(lobby, "\n")}, nil
 
 	// Handle an invite message by sending a message to the target player
 	// Send an invite message to the invitee: message.Content
@@ -119,18 +115,18 @@ func handleClientLobbyMessage(message *LobbyMessage, conn net.Conn) (*LobbyMessa
 			Message: message,
 		}
 
-		return &LobbyMessage{Type: "invite", Content: message.PlayerId}, nil
+		return &LobbyMessage{Type: "pending_invite", Content: message.Content}, nil
 
 	// Handle a accept message from a player that was invited
-	// Send an ack message back to the player: message.PlayerId
-	// Send an invite ack message back to the inviter: message.Content
-	case "accept_game":
+	// Send a game_start message back to the player: message.PlayerId
+	// Send an accepted message back to the inviter: message.Content
+	case "accept":
 		externalMessageChan <- ExternalMessage{
 			Target:  message.Content,
-			Message: &LobbyMessage{Type: "accept", Content: ""},
+			Message: &LobbyMessage{Type: "game_start", Content: ""},
 		}
 
-		return &LobbyMessage{Type: "accept", Content: ""}, nil
+		return &LobbyMessage{PlayerId: message.PlayerId, Type: "accepted", Content: ""}, nil
 
 	// Handle a chat message from a player with PlayerId
 	case "chat":
@@ -166,6 +162,7 @@ func handleClientLobbyMessage(message *LobbyMessage, conn net.Conn) (*LobbyMessa
 }
 
 func broadcastToLobby(message *LobbyMessage) {
+	var disconnectedUsers []string
 	lobbyMembers.Range(func(playerId, player interface{}) bool {
 		bytes, err := proto.Marshal(message)
 		if err != nil {
@@ -176,7 +173,13 @@ func broadcastToLobby(message *LobbyMessage) {
 		_, err = client.Conn.Write(bytes)
 		if err != nil {
 			log.Println("Error broadcasting to clients...", err)
+			disconnectedUsers = append(disconnectedUsers, playerId.(string))
+
 		}
 		return true
 	})
+
+	for _, player := range disconnectedUsers {
+		lobbyMembers.Delete(player)
+	}
 }

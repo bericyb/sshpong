@@ -40,11 +40,16 @@ func init() {
 			msg := <-externalMessageChan
 			player, ok := lobbyMembers.Load(msg.Target)
 			if !ok {
+				log.Println("failed to send to target", msg.Target)
 				continue
 			}
 			client, _ := player.(Client)
 			bytes, _ := proto.Marshal(msg.Message)
-			client.Conn.Write(bytes)
+			_, err := client.Conn.Write(bytes)
+			if err != nil {
+				log.Println("Could not write to target", msg.Target, err)
+			}
+
 		}
 	}()
 }
@@ -62,7 +67,6 @@ func LobbyListen() {
 
 	for {
 		conn, err := listener.Accept()
-		log.Println("got a connection!")
 		if err != nil {
 			log.Println(err)
 			continue
