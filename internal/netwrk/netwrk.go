@@ -3,6 +3,8 @@ package netwrk
 import (
 	"log"
 	"net"
+	"sshpong/internal/pong"
+	"strings"
 	sync "sync"
 
 	"google.golang.org/protobuf/proto"
@@ -13,27 +15,26 @@ type Client struct {
 	Conn     net.Conn
 }
 
-type LobbyPlayersMessage struct {
-	Type        string
-	Username    string
-	IsAvailable chan bool
-}
-
 type ExternalMessage struct {
 	Target  string
 	Message *LobbyMessage
 }
 
-var lobbyListener chan LobbyPlayersMessage
+type GameClients struct {
+	Client1 Client
+	Client2 Client
+}
+
 var externalMessageChan chan ExternalMessage
 
 var lobbyMembers sync.Map
+var games sync.Map
 
 func init() {
-	lobbyListener = make(chan LobbyPlayersMessage)
 	externalMessageChan = make(chan ExternalMessage)
 
 	lobbyMembers = sync.Map{}
+	games = sync.Map{}
 
 	go func() {
 		for {
@@ -76,7 +77,6 @@ func LobbyListen() {
 }
 
 func GamesListen() {
-
 	gameListener, err := net.Listen("tcp", "127.0.0.1:42069")
 	if err != nil {
 		log.Fatal(err)
@@ -89,6 +89,39 @@ func GamesListen() {
 			log.Println(err)
 			continue
 		}
-		handleGameConnection(conn)
+
+		go func(conn net.Conn) {
+			messageBytes := make([]byte, 126)
+
+			n, err := conn.Read(messageBytes)
+			if err != nil {
+				log.Printf("Error reading game ID on connection %s", err)
+			}
+
+			gInfo := strings.SplitAfter(string(messageBytes[:n]), ":")
+			if err != nil {
+				log.Printf("Game id was not a string? %s", err)
+			}
+
+			game, ok := games.Load(gInfo[0])
+			if !ok {
+				games.Store(gInfo[0], GameClients{Client1: Client{
+					Username: gInfo[1],
+					Conn:     conn,
+				}, Client2: Client{}})
+			} else {
+				gameclients, _ := game.(GameClients)
+				client2 := Client{
+					Username: gInfo[1],
+					Conn:     conn,
+				}
+
+				games.Store(gInfo[0], GameClients{
+					Client1: gameclients.Client1,
+					Client2: client2})
+
+				go pong.StartGame(gameclients.Client1.Conn, client2.Conn, gameclients.Client1.Username, client2.Username)
+			}
+		}(conn)
 	}
 }

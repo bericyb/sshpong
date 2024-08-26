@@ -11,6 +11,7 @@ func main() {
 	fmt.Println("Starting sshpong server!")
 
 	netwrk.LobbyListen()
+	netwrk.GamesListen()
 
 	_ = <-exit
 }
