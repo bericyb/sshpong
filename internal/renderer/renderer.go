@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 	"sshpong/internal/ansii"
+	"sshpong/internal/pong"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 var (
@@ -19,17 +19,11 @@ var (
 	playerY              int = 10
 )
 
-func Render() {
-	now := time.Now()
-	err := doFpsTest()
-	if err != nil {
-		fmt.Println("Error ", err)
-		return
-	}
-	then := time.Now()
-
-	total := float64(float64(then.UnixMicro()-now.UnixMicro()) / 1000.0)
-	fmt.Printf("\n\nTook %.3f milliseconds\n", total)
+func Render(state pong.GameState) {
+	// drawScreen(state)
+	fmt.Print("\033c")
+	fmt.Println("Player 1", state.Player1.Pos.X, state.Player1.Pos.Y)
+	fmt.Println("Player 2", state.Player2.Pos.X, state.Player2.Pos.Y)
 }
 
 func writeCheckerBoard(height int, width int, builder *strings.Builder) {
@@ -53,25 +47,22 @@ func writeCheckerBoard(height int, width int, builder *strings.Builder) {
 	}
 }
 
-func drawScreen(frameNum int, startMs float64) (frameTimeMs float64) {
-	_ = frameNum
-	_, height := ansii.GetTermSize()
+func drawScreen(state pong.GameState) {
+	// width := 100
+	// height := 50
 	var builder = strings.Builder{}
 	builder.WriteString(string(ansii.Screen.ClearScreen))
-	// writeCheckerBoard(height, width, &builder)
-	// var xOffset = frameNum % width
-	// ansii.DrawBox(&builder, ansii.Offset{X: 0, Y: 0}, 5, 8, ansii.Colors.Purple)
-	ansii.DrawBox(&builder, ansii.Offset{X: playerX, Y: playerY}, 5, 1, ansii.Colors.Cyan)
-	ansii.DrawPixelStyle(&builder, ansii.Offset{X: playerX, Y: playerY}, ansii.Colors.Purple)
-	ansii.DrawPixelStyle(&builder, ansii.Offset{X: playerX, Y: playerY + 5}, ansii.Colors.Purple)
+	ansii.DrawBox(&builder, ansii.Offset{X: int(state.Player1.Pos.X), Y: int(state.Player1.Pos.Y)}, 5, 1, ansii.Colors.Cyan)
+	ansii.DrawPixelStyle(&builder, ansii.Offset{X: int(state.Player1.Pos.X), Y: int(state.Player1.Pos.Y)}, ansii.Colors.Purple)
+	ansii.DrawPixelStyle(&builder, ansii.Offset{X: int(state.Player1.Pos.X), Y: int(state.Player1.Pos.Y) + 5}, ansii.Colors.Purple)
+	ansii.DrawBox(&builder, ansii.Offset{X: int(state.Player2.Pos.X), Y: int(state.Player2.Pos.Y)}, 5, 1, ansii.Colors.Cyan)
+	ansii.DrawPixelStyle(&builder, ansii.Offset{X: int(state.Player2.Pos.X), Y: int(state.Player2.Pos.Y)}, ansii.Colors.Purple)
+	ansii.DrawPixelStyle(&builder, ansii.Offset{X: int(state.Player2.Pos.X), Y: int(state.Player2.Pos.Y) + 5}, ansii.Colors.Purple)
 	// Quit instructions
-	builder.WriteString(string(ansii.Screen.PlaceCursor(ansii.Offset{X: 0, Y: height})))
-	builder.WriteString("q to quit")
+	// builder.WriteString(string(ansii.Screen.PlaceCursor(ansii.Offset{X: 0, Y: height})))
+	// builder.WriteString("q to quit")
 
 	os.Stdout.WriteString(builder.String())
-	var frameTimeMilli = (float64(time.Now().UnixNano()) / 1_000_000.0) - startMs
-	// builder.WriteString(string(ansii.Screen.Coordinate(0, 0)))
-	return frameTimeMilli
 }
 
 func drawFrameStats(frameNum int, frameTimeMs float64) {
@@ -114,82 +105,6 @@ func waitForFpsLock(startMs float64) {
 		var nowMs = float64(time.Now().UnixNano()) / 1_000_000.0
 		if nowMs-startMs >= millisecondTimeFrame {
 			break
-		}
-	}
-}
-
-func doFpsTest() error {
-	prev, err := ansii.MakeTermRaw()
-	if err != nil {
-		return err
-	}
-	defer ansii.RestoreTerm(prev)
-	quit = make(chan bool, 1)
-	userInput = make(chan rune, 1)
-
-	// User input loop
-	go func() {
-		for {
-			buf := make([]byte, 3)
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading from stdin: %v\n", err)
-				continue
-			}
-
-			if n > 0 {
-				if buf[0] == 0x1b { // ESC
-					if n > 1 && buf[1] == '[' { // ESC [
-						switch buf[2] {
-						case 'A':
-							userInput <- '↑' // Up arrow
-						case 'B':
-							userInput <- '↓' // Down arrow
-						case 'C':
-							userInput <- '→' // Right arrow
-						case 'D':
-							userInput <- '←' // Left arrow
-						default:
-							userInput <- '?'
-						}
-					} else {
-						userInput <- '?'
-					}
-				} else {
-					r, _ := utf8.DecodeRune(buf)
-					userInput <- r
-				}
-			}
-		}
-	}()
-	// Rendering loop
-	go func() {
-		for i := 0; i <= 10_000; i++ {
-			startMs := float64(time.Now().UnixNano()) / 1_000_000.0
-			select {
-			case <-quit:
-				return
-			default:
-				frameTimeMs := drawScreen(i, startMs)
-				drawFrameStats(i, frameTimeMs)
-				waitForFpsLock(startMs)
-			}
-		}
-		close(quit)
-	}()
-
-	os.Stdout.WriteString(string(ansii.Screen.HideCursor))
-	defer os.Stdout.WriteString(string(ansii.Screen.ShowCursor))
-	for {
-		select {
-		case <-quit:
-			fmt.Println("Exiting")
-			return nil
-		// case ui := <-userInput:
-		case input := <-userInput:
-			handleInput(input)
-		// fmt.Println(ui)
-		default:
 		}
 	}
 }

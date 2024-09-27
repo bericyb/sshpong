@@ -1,15 +1,15 @@
 package pong
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/exp/rand"
-	"google.golang.org/protobuf/proto"
 )
 
 type GameClient struct {
@@ -20,38 +20,71 @@ type GameClient struct {
 var player1 GameClient
 var player2 GameClient
 
-var ingress chan *ClientUpdateRequest
-var egress chan *ServerUpdateMessage
+var ingress chan StateUpdate
+var egress chan StateUpdate
 
-const posXBound = 50
+const posXBound = 100
 const negXBound = posXBound * -1
 const posYBound = 50
 const negYBound = posYBound * -1
 
 func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
+
+	egress = make(chan StateUpdate)
+	ingress = make(chan StateUpdate)
+
 	player1 = GameClient{
 		Username: username1,
 		Conn:     conn1,
 	}
+
+	p1msg := StateUpdate{
+		FieldPath: "isPlayer1",
+		Value:     []byte{1},
+	}
+	b, err := json.Marshal(p1msg)
+	if err != nil {
+		return
+	}
+	_, err = player1.Conn.Write(b)
+	if err != nil {
+		fmt.Println("Error writing player1 msg to player1")
+		return
+	}
+
 	player2 = GameClient{
 		Username: username2,
 		Conn:     conn2,
 	}
 
+	p2msg := StateUpdate{
+		FieldPath: "isPlayer1",
+		Value:     []byte{0},
+	}
+	b, err = json.Marshal(p2msg)
+	if err != nil {
+		return
+	}
+	_, err = player2.Conn.Write(b)
+	if err != nil {
+		fmt.Println("Error writing player1 msg to player2")
+		return
+	}
+
 	time.Sleep(1 * time.Second)
-	broadcastUpdate(&ServerUpdateMessage{
-		Type:  "message",
-		Value: "Ready...",
+	broadcastUpdate(StateUpdate{
+		FieldPath: "Message",
+		Value:     []byte("Ready..."),
 	})
 	time.Sleep(1 * time.Second)
-	broadcastUpdate(&ServerUpdateMessage{
-		Type:  "message",
-		Value: "Set...",
+	broadcastUpdate(StateUpdate{
+		FieldPath: "Message",
+		Value:     []byte("Set..."),
 	})
 	time.Sleep(1 * time.Second)
-	broadcastUpdate(&ServerUpdateMessage{
-		Type:  "message",
-		Value: "Go!",
+	broadcastUpdate(StateUpdate{
+		FieldPath: "Message",
+		Value:     []byte("Go!"),
 	})
 	time.Sleep(1 * time.Second)
 	bv := float32(rand.Intn(2)*2 - 1)
@@ -68,7 +101,6 @@ func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 				X: 1,
 				Y: 10,
 			},
-			Speed: 0,
 		},
 		Player2: Player{
 			client: player2,
@@ -80,7 +112,6 @@ func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 				X: 1,
 				Y: 10,
 			},
-			Speed: 0,
 		},
 		Ball: Ball{
 			Pos: Vector{
@@ -93,23 +124,22 @@ func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 			},
 		},
 	}
-	go gameLoop(state)
+	go gameLoop(&state)
 }
 
-func gameLoop(state GameState) {
+func gameLoop(state *GameState) {
 	// Player 1 read loop
 	go func() {
 		for {
 
 			bytes := make([]byte, 512)
 			n, err := state.Player1.client.Conn.Read(bytes)
-			msg := &ClientUpdateRequest{}
-			err = proto.Unmarshal(bytes[:n], msg)
+			msg := StateUpdate{}
+			err = json.Unmarshal(bytes[:n], &msg)
 			if err != nil {
 				log.Println("error reading player 1's update request:", err)
 				return
 			}
-			msg.Player = 1
 			ingress <- msg
 		}
 	}()
@@ -120,13 +150,12 @@ func gameLoop(state GameState) {
 
 			bytes := make([]byte, 512)
 			n, err := state.Player2.client.Conn.Read(bytes)
-			msg := &ClientUpdateRequest{}
-			err = proto.Unmarshal(bytes[:n], msg)
+			msg := StateUpdate{}
+			err = json.Unmarshal(bytes[:n], &msg)
 			if err != nil {
 				log.Println("error reading player 2's update request:", err)
 				return
 			}
-			msg.Player = 2
 			ingress <- msg
 		}
 	}()
@@ -143,20 +172,38 @@ func gameLoop(state GameState) {
 	for {
 		select {
 		case msg := <-ingress:
-			err := handlePlayerRequest(&state, msg)
+			err := handlePlayerRequest(msg, state)
 			if err != nil {
 				fmt.Println("FUCK!~", err)
 			}
 
 		case _ = <-ticker.C:
-			update := process(&state)
-			egress <- &update
+			update := process(state)
+			egress <- update
 		}
 
 	}
 }
 
-func process(state *GameState) ServerUpdateMessage {
+func process(state *GameState) StateUpdate {
+
+	// Move players
+	// Check if player edge is out of bounds
+	//	If out of bounds reset velocity to zero and position to edge
+
+	if state.Player1.Pos.Y+state.Player1.Size.Y/2 > posYBound {
+		state.Player1.Pos.Y = posYBound - state.Player1.Size.Y/2 - 1
+	}
+	if state.Player1.Pos.Y-state.Player1.Size.Y/2 < negYBound {
+		state.Player1.Pos.Y = negYBound + state.Player1.Size.Y/2 + 1
+	}
+
+	if state.Player2.Pos.Y+state.Player2.Size.Y/2 > posYBound {
+		state.Player2.Pos.Y = posYBound - state.Player2.Size.Y/2 - 1
+	}
+	if state.Player2.Pos.Y-state.Player2.Size.Y/2 < negYBound {
+		state.Player2.Pos.Y = negYBound + state.Player2.Size.Y/2 + 1
+	}
 
 	// Move ball
 	// Check if ball is out of bounds
@@ -192,9 +239,9 @@ func process(state *GameState) ServerUpdateMessage {
 			state.Ball.Vel.X = 1
 			state.Ball.Vel.Y = 0
 			if state.Score[player2.Username] >= 9 {
-				return ServerUpdateMessage{
-					Type:  "gameover",
-					Value: player2.Username,
+				return StateUpdate{
+					FieldPath: "Winner",
+					Value:     []byte(player2.Username),
 				}
 			}
 			state.Score[player2.Username] = state.Score[player2.Username] + 1
@@ -215,49 +262,79 @@ func process(state *GameState) ServerUpdateMessage {
 			state.Ball.Vel.X = -1
 			state.Ball.Vel.Y = 0
 			if state.Score[player1.Username] >= 9 {
-				return ServerUpdateMessage{
-					Type:  "gameover",
-					Value: player1.Username,
+				return StateUpdate{
+					FieldPath: "Winner",
+					Value:     []byte(player1.Username),
 				}
 			}
 			state.Score[player1.Username] = state.Score[player1.Username] + 1
 		}
 	}
 
-	return ServerUpdateMessage{}
-}
-
-func handlePlayerRequest(state *GameState, msg *ClientUpdateRequest) error {
-
-	switch msg.Type {
-	case "player_pos":
-		if msg.Player == 1 {
-			pos := strings.Split(msg.Value, " ")
-			x, err := strconv.ParseFloat(pos[0], 32)
-			if err != nil {
-				fmt.Println("Got weird position update for x", err)
-			}
-			y, err := strconv.ParseFloat(pos[1], 32)
-			if err != nil {
-				fmt.Println("Got weird position update for y", err)
-			}
-
-			state.Player1.Pos = Vector{
-				X: float32(x),
-				Y: float32(y),
-			}
-		}
-	default:
-		fmt.Println("Got unhandled update", msg.Type)
+	ns, err := json.Marshal(state)
+	if err != nil {
+		slog.Debug("error marshalling entire state update", slog.Any("error", err))
 	}
 
+	return StateUpdate{
+		FieldPath: "All",
+		Value:     ns,
+	}
+}
+
+func handlePlayerRequest(update StateUpdate, state *GameState) error {
+
+	fields := strings.Split(update.FieldPath, ".")
+
+	// type GameState struct {
+	// 	Message string
+	// 	Winner  string
+	// 	Score   map[string]int
+	// 	Player1 Player
+	// 	Player2 Player
+	// 	Ball    Ball
+	// }
+
+	switch fields[0] {
+	case "Message":
+		state.Message = string(update.Value)
+	case "Winner":
+		state.Winner = string(update.Value)
+	case "Player1":
+		switch fields[1] {
+		case "Pos":
+			v1 := Vector{}
+			err := json.Unmarshal(update.Value, &v1)
+			if err != nil {
+				slog.Debug("error unmarshalling player1 update")
+			}
+			state.Player1.Pos = v1
+		}
+	case "Player2":
+		switch fields[1] {
+		case "Pos":
+			v2 := Vector{}
+			err := json.Unmarshal(update.Value, &v2)
+			if err != nil {
+				slog.Debug("error unmarshalling player2 update")
+			}
+			state.Player2.Pos = v2
+		}
+	case "Ball":
+		b := Ball{}
+		err := json.Unmarshal(update.Value, &b)
+		if err != nil {
+			slog.Debug("error unmarshalling ball update")
+		}
+		state.Ball = b
+	}
 	return nil
 }
 
-func broadcastUpdate(update *ServerUpdateMessage) error {
-	msg, err := proto.Marshal(update)
+func broadcastUpdate(update StateUpdate) error {
+	msg, err := json.Marshal(update)
 	if err != nil {
-		return fmt.Errorf("malformed server update message %v", err)
+		return err
 	}
 	_, err = player1.Conn.Write(msg)
 	if err != nil {
