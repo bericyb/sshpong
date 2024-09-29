@@ -2,7 +2,6 @@ package lobby
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -24,7 +23,7 @@ type Client struct {
 type ExternalMessage struct {
 	From    string
 	Target  string
-	Message LobbyMessage
+	Message []byte
 }
 
 func CreateLobby() *Lobby {
@@ -52,13 +51,7 @@ func CreateLobby() *Lobby {
 					slog.Debug("Item that was not a client found in the lobby map...", slog.Any("key", msg.From))
 				}
 				go func() {
-					em := LobbyMessage{
-						MessageType: "error",
-						Message: Error{
-							Message: fmt.Sprintf("Sorry, player %s is not available...", msg.Target),
-						},
-					}
-					b, err := Marshal(em)
+					b, err := Marshal(ErrorData{Message: fmt.Sprintf("Sorry player %s is not available...", msg.Target)}, Error)
 					if err != nil {
 						slog.Debug("Could not marshall error message for missing player", slog.Any("error", err))
 					}
@@ -68,16 +61,12 @@ func CreateLobby() *Lobby {
 			}
 			c, ok := tc.(Client)
 			if !ok {
-
 				slog.Debug("Item that was not a client found in the lobby map...", slog.Any("key", msg.From))
+				lm.Delete(msg.Target)
 				continue
 			}
 			go func() {
-				b, err := Marshal(msg.Message)
-				if err != nil {
-					slog.Debug("Could not marshal external message...", slog.Any("error", err))
-				}
-				c.Conn.Write(b)
+				c.Conn.Write(msg.Message)
 			}()
 
 		}
@@ -86,33 +75,33 @@ func CreateLobby() *Lobby {
 	return &l
 }
 
-func (l *Lobby) HandleLobbyConnection(conn net.Conn) {
+func (l *Lobby) HandleLobbyConnection(client Client) {
 	messageBytes := make([]byte, 4096)
 
-	ingress := make(chan LobbyMessage)
-	egress := make(chan LobbyMessage)
+	ingress := make(chan []byte)
+	egress := make(chan []byte)
 
 	// Network Reader
 	go func() {
 		for {
-			n, err := conn.Read(messageBytes)
-			if err == io.EOF {
-				conn.Close()
-				return
-			}
+			n, err := client.Conn.Read(messageBytes)
 			if err != nil {
-				conn.Close()
+				client.Conn.Close()
 				log.Printf("Error reading message %v", err)
+				l.lobbyMembers.Delete(client.Username)
+
+				// Server receives a disconnect message of the user
+				msg, err := Marshal(DisconnectData{
+					From: client.Username,
+				}, Disconnect)
+				if err != nil {
+					slog.Error("error marshalling responsive disconnect of EOF error", "error", err)
+				} else {
+					ingress <- msg
+				}
 				return
 			}
-
-			message := LobbyMessage{}
-
-			message, err = Unmarshal(messageBytes[:n])
-			if err != nil {
-				log.Println("Invalid message received from client", err)
-			}
-			ingress <- message
+			ingress <- messageBytes[:n]
 		}
 	}()
 
@@ -120,21 +109,21 @@ func (l *Lobby) HandleLobbyConnection(conn net.Conn) {
 	go func() {
 		for {
 			msg := <-egress
-			bytes, err := Marshal(msg)
+			_, err := client.Conn.Write(msg)
 			if err != nil {
-				log.Println("Error marshalling message to send to user...", err)
-			}
-			_, err = conn.Write(bytes)
-			if err == io.EOF {
-				conn.Close()
-				log.Println("User has disconnected", err)
+				client.Conn.Close()
 
-				// TODO: write message for disconnect to everyone?
-				slog.Debug("Sending bad disconnect message")
-				ingress <- LobbyMessage{MessageType: "disconnect", Message: Disconnect{}}
-			}
-			if err != nil {
-				log.Println("Error writing to user...", err)
+				l.lobbyMembers.Delete(client.Username)
+
+				// Server receives a disconnect message of the user
+				msg, err := Marshal(DisconnectData{
+					From: client.Username,
+				}, Disconnect)
+				if err != nil {
+					slog.Error("error marshalling responsive disconnect of EOF error", "error", err)
+				} else {
+					ingress <- msg
+				}
 			}
 		}
 	}()
@@ -143,139 +132,158 @@ func (l *Lobby) HandleLobbyConnection(conn net.Conn) {
 	go func() {
 		for {
 			msg := <-ingress
-			serverMsg, err := l.handleClientLobbyMessage(&msg, conn)
+			slog.Debug("Received an ingress message", "message", msg)
+
+			resMsg, err := l.handleClientLobbyMessage(msg)
 			if err != nil {
-				log.Println("Error handling client lobby message...", err)
+				resMsg, err = Marshal(ErrorData{
+					Message: err.Error(),
+				}, Error)
 			}
-			if serverMsg.MessageType != "" {
-				egress <- serverMsg
+			if len(resMsg) > 0 {
+				egress <- resMsg
 			}
 		}
 	}()
 }
 
-// Returns a bool of whether the player has disconnected from the lobby and an error
-func (l *Lobby) handleClientLobbyMessage(message *LobbyMessage, conn net.Conn) (LobbyMessage, error) {
-	switch message.MessageType {
-	// Handle an name/login message from a player
-	// Store the new player in the l.lobbyMembers
-	// Send a connection message for each of the l.lobbyMembers to the new player
-	// Send a connection message to all members in the lobby
-	case "name":
-		_, ok := l.lobbyMembers.Load(message.Message)
-		if ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry, that name is already taken, please try a different name"}}, nil
+func (l *Lobby) handleClientLobbyMessage(msg []byte) ([]byte, error) {
+	header := msg[0]
+
+	switch header {
+	case Chat:
+		l.BroadcastToLobby(msg)
+		return []byte{}, nil
+	case Invite:
+		i, err := Unmarshal[InviteData](msg)
+		if err != nil {
+			slog.Debug("error unmarshalling invite message", "error", err)
+			return []byte{}, err
 		}
 
-		nm, ok := message.Message.(Name)
-		if !ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry the message value and type were not matching for name"}}, nil
+		msg, err := Marshal(InviteData{
+			From: i.From,
+			To:   i.To,
+		}, Invite)
+		if err != nil {
+			slog.Error("error marshalling invite data...", "error", err)
+			return []byte{}, err
 		}
 
-		l.lobbyMembers.Store(nm.Name, Client{Username: nm.Name, Conn: conn})
-
-		// Build current lobby list
-		var lobby []string
-		l.lobbyMembers.Range(func(lobbyUsername any, client any) bool {
-			usernameString, _ := lobbyUsername.(string)
-			lobby = append(lobby, usernameString)
-			return true
-		})
-
-		l.broadcastToLobby(LobbyMessage{MessageType: "connect", Message: Name{Name: nm.Name}})
-
-		return LobbyMessage{MessageType: "name", Message: Name{
-			Name: nm.Name,
-		},
-		}, nil
-
-	// Handle an invite message by sending a message to the target player
-	// Send an invite message to the invitee: message.Content
-	// Send an ack message to the inviter: message.PlayerId
-	case "invite":
-
-		i, ok := message.Message.(Invite)
-		if !ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry the message value and type were not matching for invite"}}, nil
-		}
-		// TODO: figure out this shit
 		l.ExternalMessageChannel <- ExternalMessage{
 			From:    i.From,
 			Target:  i.To,
-			Message: LobbyMessage{},
+			Message: msg,
 		}
 
-		return LobbyMessage{MessageType: "pending_invite", Message: PendingInvite{
+		return Marshal(PendingInviteData{
 			Recipient: i.To,
-		}}, nil
+		}, PendingInvite)
 
-	// Handle a accept message from a player that was invited
-	// Send a game_start message back to the player: message.Content
-	// Send an accepted message back to the inviter: message.PlayerId
-	case "accept":
-		gameID := uuid.NewString()
+	// TODO: is pending invite really something that we need?
+	// case PendingInvite:
+	// 	pi, err := Unmarshal[PendingInviteData](msg)
+	// 	if err != nil {
+	// 		slog.Debug("error unmarshalling pending invite message", err)
+	// 		return
+	// 	}
 
-		am, ok := message.Message.(Accept)
-		if !ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry the message value and type were not matching for accept"}}, nil
+	case Accept:
+		a, err := Unmarshal[AcceptData](msg)
+		if err != nil {
+			slog.Debug("error unmarshalling accept message", "error", err)
+			return []byte{}, err
 		}
 
-		slog.Debug("incoming accept message", slog.Any("From", am.From), slog.Any("To", am.To))
+		gID := uuid.NewString()
+
+		msg, err := Marshal(AcceptedData{
+			Accepter: a.From,
+			GameID:   gID,
+		}, Accepted)
+
 		l.ExternalMessageChannel <- ExternalMessage{
-			Target: am.To,
-			Message: LobbyMessage{MessageType: "accepted", Message: Accepted{
-				Accepter: am.From,
-				GameID:   gameID,
-			},
-			}}
-
-		return LobbyMessage{MessageType: "start_game", Message: StartGame{To: am.From, GameID: gameID}}, nil
-	// Handle a chat message from a player with PlayerId
-	case "chat":
-		c, ok := message.Message.(Chat)
-		if !ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry the message value and type were not matching for chat"}}, nil
+			From:    a.From,
+			Target:  a.To,
+			Message: msg,
 		}
-		l.broadcastToLobby(LobbyMessage{MessageType: "text", Message: Chat{
-			From:    c.From,
-			Message: c.Message,
-		}})
-		return LobbyMessage{}, nil
 
-	// Handle a quit message from a player that was connected
-	// broadcast the player quit to the lobby
-	case "quit":
-		q, ok := message.Message.(Disconnect)
-		if !ok {
-			return LobbyMessage{MessageType: "error", Message: Error{Message: "Sorry the message value and type were not matching for quit"}}, nil
+		return Marshal(StartGameData{
+			To:     a.From,
+			GameID: gID,
+		}, StartGame)
+
+	case Accepted:
+		a, err := Unmarshal[AcceptedData](msg)
+		if err != nil {
+			slog.Debug("error unmarshalling accpeted message", "error", err)
+			return []byte{}, err
 		}
-		l.lobbyMembers.Delete(q.From)
-		l.broadcastToLobby(LobbyMessage{MessageType: "disconnect", Message: Disconnect{
-			From: q.From,
-		}})
-		return LobbyMessage{}, nil
 
-	// Ping and pong
-	case "ping":
-		return LobbyMessage{MessageType: "pong", Message: "pong"}, nil
+		// TODO: figure out the accepted and start game data situation... To field is a little hard to fill.
+		return Marshal(StartGameData{
+			To:     "",
+			GameID: a.GameID,
+		}, StartGame)
 
-	// Ping and pong
-	default:
-		return LobbyMessage{MessageType: "pong", Message: "pong"}, nil
+	// TODO: Like pending invite, I think start game is only a client message
+	// case StartGame:
+	// 	sg, err := Unmarshal[StartGameData](msg)
+	// 	if err != nil {
+	// 		slog.Debug("error unmarshalling start game message", err)
+	// 		return []byte{}, err
+	// 	}
 
+	// TODO: Do we even want to support decline responses?
+	// case Decline:
+	// 	d, err := Unmarshal[DeclineData](msg)
+	// 	if err != nil {
+	// 		slog.Debug("error unmarshalling decline message", err)
+	// 		return []byte{}, err
+	// 	}
+
+	case Disconnect:
+		d, err := Unmarshal[DisconnectData](msg)
+		if err != nil {
+			slog.Debug("error unmarshalling disconnect message", "error", err)
+			return []byte{}, err
+		}
+
+		l.lobbyMembers.Delete(d.From)
+
+		msg, err := Marshal(DisconnectData{
+			From: d.From,
+		}, Disconnect)
+
+		l.BroadcastToLobby(msg)
+
+		// TODO: how do we handle a disconnect for the client's side
+		return []byte{}, nil
+
+		// TODO: This is just a client side message right...?
+		// case Connect:
+		// 	c, err := Unmarshal[ConnectData](msg)
+		// 	if err != nil {
+		// 		slog.Debug("error unmarshalling connect message", err)
+		// 		return
+		// 	}
+
+		// TODO: This is just a client side message right...?
+		// case Error:
+		// 	e, err := Unmarshal[ErrorData](msg)
+		// 	if err != nil {
+		// 		slog.Debug("error unmarshalling error message", err)
+		// 		return []byte{}, err
+		// 	}
 	}
+	return []byte{}, nil
 }
 
-func (l *Lobby) broadcastToLobby(message LobbyMessage) {
+func (l *Lobby) BroadcastToLobby(bytes []byte) {
 	var disconnectedUsers []string
 	l.lobbyMembers.Range(func(playerId, player interface{}) bool {
-		bytes, err := Marshal(message)
-		if err != nil {
-			log.Println("Error marshalling broadcast message", err)
-		}
-
 		client := player.(Client)
-		_, err = client.Conn.Write(bytes)
+		_, err := client.Conn.Write(bytes)
 		if err != nil {
 			log.Println("Error broadcasting to clients...", err)
 			disconnectedUsers = append(disconnectedUsers, playerId.(string))
@@ -287,4 +295,63 @@ func (l *Lobby) broadcastToLobby(message LobbyMessage) {
 	for _, player := range disconnectedUsers {
 		l.lobbyMembers.Delete(player)
 	}
+}
+func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte) {
+	msg := make([]byte, 256)
+	nb, err := conn.Read(msg)
+	if err != nil {
+		slog.Debug("error reading from initial connection")
+	}
+	msg = msg[:nb]
+	n, err := Unmarshal[NameData](msg)
+	if err != nil {
+		slog.Debug("error unmarshalling name message:", "error", err.Error(), "message", msg[1:nb])
+
+		msgOut, err := Marshal(ErrorData{
+			Message: "incorrectly formatted username in name message",
+		}, Error)
+		if err != nil {
+			slog.Error("error marshalling error message for incorrectly formatted username")
+		}
+		return Client{}, msgOut
+	}
+	_, ok := l.lobbyMembers.Load(n.Name)
+	if ok {
+		msg, err := Marshal(ErrorData{
+			Message: "Sorry that name is already taken, please try a different name",
+		}, Error)
+		if err != nil {
+			slog.Error("error marshalling error on name already taken msg")
+		}
+		return Client{}, msg
+	}
+	h, err := Marshal(ConnectData{
+		From: n.Name,
+	}, Connect)
+	if err != nil {
+		slog.Debug("error marshalling broadcast connect message on player connect", "error", err)
+		return Client{Username: n.Name, Conn: conn}, h
+	}
+	l.BroadcastToLobby(h)
+
+	// Build current lobby list
+	var lobby []string
+	l.lobbyMembers.Range(func(lobbyUsername any, client any) bool {
+		usernameString, _ := lobbyUsername.(string)
+		lobby = append(lobby, usernameString)
+		return true
+	})
+	msgOut, err := Marshal(CurrentlyConnectedData{Players: lobby}, CurrentlyConnected)
+	if err != nil {
+		slog.Debug("Error marshalling currectly connected data on player connect")
+	}
+
+	client := Client{
+		Username: n.Name,
+		Conn:     conn,
+	}
+
+	l.lobbyMembers.Store(n.Name, client)
+
+	return client, msgOut
 }

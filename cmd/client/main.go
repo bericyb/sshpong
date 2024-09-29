@@ -21,8 +21,8 @@ func main() {
 	fmt.Println("Welcome to sshpong!")
 	fmt.Println("Please enter your username")
 
-	egress := make(chan lobby.LobbyMessage)
-	ingress := make(chan lobby.LobbyMessage)
+	egress := make(chan []byte)
+	ingress := make(chan []byte)
 	interrupter := make(chan client.InterrupterMessage, 100)
 	exit := make(chan string)
 
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	// User input handler
-	go func(egress chan lobby.LobbyMessage) {
+	go func() {
 		buf := make([]byte, 1024)
 		for {
 			n, err := os.Stdin.Read(buf)
@@ -51,7 +51,7 @@ func main() {
 			input := string(buf[:n-1])
 			args := strings.Fields(input)
 
-			userMessage := lobby.LobbyMessage{}
+			userMessage := []byte{}
 
 			select {
 			case msg := <-interrupter:
@@ -67,20 +67,14 @@ func main() {
 					}
 				}
 				egress <- userMessage
-				if userMessage.MessageType == "accept" || userMessage.MessageType == "disconect" {
-					slog.Debug("Closing input handler with accept or disconnect message", slog.Any("message content", userMessage.Message))
+				if userMessage[0] == lobby.Accept || userMessage[0] == lobby.Disconnect {
+					slog.Debug("Closing input handler with accept or disconnect message")
 					return
 				}
-				if userMessage.MessageType == "start_game" {
+				if userMessage[0] == lobby.StartGame {
 					slog.Debug("closing input handler with start_game message and sending exit signal")
 
-					// TODO: This is a wierd one...
-					sg, ok := userMessage.Message.(lobby.StartGame)
-					if !ok {
-						slog.Debug("Start game interrupt message was improperly formatted... Could be indicative of an error in the HandleinterruptInput method")
-						continue
-					}
-					exit <- sg.GameID
+					exit <- msg.Content
 					return
 				}
 
@@ -98,10 +92,10 @@ func main() {
 			}
 
 		}
-	}(egress)
+	}()
 
 	// Ingress Handler
-	go func(oc chan lobby.LobbyMessage) {
+	go func() {
 		for {
 			msg := <-ingress
 
@@ -114,47 +108,36 @@ func main() {
 			}
 		}
 
-	}(ingress)
+	}()
 
 	// Network writer
-	go func(userMessages chan lobby.LobbyMessage) {
+	go func() {
 		for {
-			msg := <-userMessages
-			bytes, err := lobby.Marshal(msg)
-			if err != nil {
-				log.Panic("Malformed proto message", err)
-			}
-			_, err = conn.Write(bytes)
+			msg := <-egress
+			slog.Debug("writing egress message to server", "message", msg)
+
+			_, err = conn.Write(msg)
 			if err == io.EOF {
-				log.Panic("Server disconnected sorry...")
-			} else if err != nil {
-				log.Panic("Error reading from server connection...")
+				log.Panic("Server disconnected, sorry...")
 			}
-			if msg.MessageType == "start_game" || msg.MessageType == "disconnect" {
+			if msg[0] == lobby.StartGame || msg[0] == lobby.Disconnect {
 				slog.Debug("closing network writer ")
 				return
 			}
 		}
-	}(egress)
+	}()
 
 	// Network reader
-	go func(serverMessages chan lobby.LobbyMessage) {
+	go func() {
 		buf := make([]byte, 1024)
 		for {
 			n, err := conn.Read(buf)
 			if err == io.EOF {
-				fmt.Println("disconnected from lobby")
-			} else if err != nil {
-				log.Panic("Error reading from server connection...", err)
+				log.Panic("disconnected from lobby")
 			}
-
-			message, err := lobby.Unmarshal(buf[:n])
-			if err != nil {
-				log.Panic("Error reading message from server", err)
-			}
-			serverMessages <- message
+			ingress <- buf[:n]
 		}
-	}(ingress)
+	}()
 
 	fmt.Println("Waiting for an exit message")
 	isStartGame := <-exit
@@ -179,7 +162,7 @@ func ConnectToLobby(username string) (net.Conn, error) {
 		return nil, fmt.Errorf("Sorry, failed to connect to server...")
 	}
 
-	loginMsg, err := lobby.Marshal(lobby.LobbyMessage{MessageType: "name", Message: lobby.Name{Name: username}})
+	loginMsg, err := lobby.Marshal(lobby.NameData{Name: username}, lobby.Name)
 	if err != nil {
 		return nil, fmt.Errorf("Sorry bro but your username is wack AF...")
 	}

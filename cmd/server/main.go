@@ -44,7 +44,23 @@ func LobbyListen() {
 			log.Println(err)
 			continue
 		}
-		go l.HandleLobbyConnection(conn)
+
+		go func() {
+			client, msgOut := l.InitialConnectionHandler(conn)
+			_, err = conn.Write(msgOut)
+			if err != nil {
+				slog.Debug("error writing to new player... disconnecting")
+				msg, err := lobby.Marshal(lobby.DisconnectData{
+					From: client.Username,
+				}, lobby.Disconnect)
+				if err != nil {
+					slog.Error("error marshalling disconnect message on player connect")
+				}
+				l.BroadcastToLobby(msg)
+			}
+
+			go l.HandleLobbyConnection(client)
+		}()
 	}
 }
 
