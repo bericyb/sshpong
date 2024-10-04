@@ -1,0 +1,6 @@
+1. Inviter invites other player
+2. Recipent acceptes invite
+3. Recipent Sends Accept message with generated GameID, receives StartGame message
+3. Recipent handles StartGame message and connects to game instance
+4. Inviter recieves StartGame message with GameID
+5. Inviter connects to game instance

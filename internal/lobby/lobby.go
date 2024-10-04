@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 type Lobby struct {
@@ -37,6 +35,7 @@ func CreateLobby() *Lobby {
 	go func(lm *sync.Map) {
 		for {
 			msg := <-externalMessageChan
+			slog.Debug("forwarding external message")
 
 			tc, ok := lm.Load(msg.Target)
 			if !ok {
@@ -170,10 +169,17 @@ func (l *Lobby) handleClientLobbyMessage(msg []byte) ([]byte, error) {
 			return []byte{}, err
 		}
 
-		l.ExternalMessageChannel <- ExternalMessage{
-			From:    i.From,
-			Target:  i.To,
-			Message: msg,
+		_, ok := l.lobbyMembers.Load(i.To)
+		if !ok {
+			return Marshal(ErrorData{
+				Message: fmt.Sprintf("Sorry, player %s is not available.", i.To),
+			}, Error)
+		} else {
+			l.ExternalMessageChannel <- ExternalMessage{
+				From:    i.From,
+				Target:  i.To,
+				Message: msg,
+			}
 		}
 
 		return Marshal(PendingInviteData{
@@ -195,12 +201,11 @@ func (l *Lobby) handleClientLobbyMessage(msg []byte) ([]byte, error) {
 			return []byte{}, err
 		}
 
-		gID := uuid.NewString()
+		gID := a.GameID
 
-		msg, err := Marshal(AcceptedData{
-			Accepter: a.From,
-			GameID:   gID,
-		}, Accepted)
+		msg, err := Marshal(StartGameData{
+			GameID: gID,
+		}, StartGame)
 
 		l.ExternalMessageChannel <- ExternalMessage{
 			From:    a.From,
@@ -208,23 +213,25 @@ func (l *Lobby) handleClientLobbyMessage(msg []byte) ([]byte, error) {
 			Message: msg,
 		}
 
+		slog.Debug("Sent start game message to inviter")
+
 		return Marshal(StartGameData{
 			To:     a.From,
+			From:   a.To,
 			GameID: gID,
 		}, StartGame)
 
-	case Accepted:
-		a, err := Unmarshal[AcceptedData](msg)
-		if err != nil {
-			slog.Debug("error unmarshalling accpeted message", "error", err)
-			return []byte{}, err
-		}
-
-		// TODO: figure out the accepted and start game data situation... To field is a little hard to fill.
-		return Marshal(StartGameData{
-			To:     "",
-			GameID: a.GameID,
-		}, StartGame)
+	// TODO: figure out the accepted and start game data situation... To field is a little hard to fill.
+	// case Accepted:
+	// 	a, err := Unmarshal[AcceptedData](msg)
+	// 	if err != nil {
+	// 		slog.Debug("error unmarshalling accpeted message", "error", err)
+	// 		return []byte{}, err
+	// 	}
+	// 	return Marshal(StartGameData{
+	// 		To:     "",
+	// 		GameID: a.GameID,
+	// 	}, StartGame)
 
 	// TODO: Like pending invite, I think start game is only a client message
 	// case StartGame:

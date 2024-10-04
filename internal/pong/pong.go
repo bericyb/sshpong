@@ -23,7 +23,7 @@ var player2 GameClient
 var ingress chan StateUpdate
 var egress chan StateUpdate
 
-const posXBound = 100
+const posXBound = 52
 const negXBound = posXBound * -1
 const posYBound = 50
 const negYBound = posYBound * -1
@@ -141,6 +141,9 @@ func gameLoop(state *GameState) {
 				return
 			}
 			ingress <- msg
+			if msg.FieldPath == "Winner" {
+				return
+			}
 		}
 	}()
 
@@ -157,6 +160,9 @@ func gameLoop(state *GameState) {
 				return
 			}
 			ingress <- msg
+			if msg.FieldPath == "Winner" {
+				return
+			}
 		}
 	}()
 
@@ -164,6 +170,9 @@ func gameLoop(state *GameState) {
 		for {
 			msg := <-egress
 			broadcastUpdate(msg)
+			if msg.FieldPath == "Winner" {
+				return
+			}
 		}
 	}()
 
@@ -176,17 +185,23 @@ func gameLoop(state *GameState) {
 			if err != nil {
 				fmt.Println("FUCK!~", err)
 			}
+			if msg.FieldPath == "Winner" {
+				slog.Debug("Closing game loop on winner message")
+				return
+			}
 
 		case _ = <-ticker.C:
 			update := process(state)
 			egress <- update
+			if update.FieldPath == "Winner" {
+				slog.Debug("Closing game loop")
+				return
+			}
 		}
-
 	}
 }
 
 func process(state *GameState) StateUpdate {
-
 	// Move players
 	// Check if player edge is out of bounds
 	//	If out of bounds reset velocity to zero and position to edge
@@ -229,11 +244,13 @@ func process(state *GameState) StateUpdate {
 	if state.Ball.Pos.X <= negXBound+1 && state.Ball.Vel.X < 0 {
 		// Paddle hit!
 		if state.Ball.Pos.Y <= state.Player1.Pos.Y+state.Player1.Size.Y && state.Ball.Pos.Y >= state.Player1.Pos.Y-state.Player1.Size.Y {
+			slog.Debug("Player1 paddle hit!")
 			state.Ball.Pos.X = (negXBound + 1) - (state.Ball.Pos.X - (negXBound + 1))
 			state.Ball.Vel.X = state.Ball.Vel.X * -1.001
-			angleTweak := (state.Ball.Pos.Y - state.Player2.Pos.Y) / (state.Player2.Size.Y / 2)
-			state.Ball.Vel.Y = state.Ball.Vel.Y * angleTweak
+			angleTweak := (state.Ball.Pos.Y - state.Player1.Pos.Y) / (state.Player1.Size.Y / 2)
+			state.Ball.Vel.Y = angleTweak / 10
 		} else {
+			slog.Debug("Player1 paddle miss...")
 			state.Ball.Pos.X = 0
 			state.Ball.Pos.Y = 0
 			state.Ball.Vel.X = 1
@@ -252,11 +269,13 @@ func process(state *GameState) StateUpdate {
 	if state.Ball.Pos.X > posXBound-1 && state.Ball.Vel.X > 0 {
 		// Paddle hit!
 		if state.Ball.Pos.Y <= state.Player2.Pos.Y+state.Player2.Size.Y && state.Ball.Pos.Y >= state.Player2.Pos.Y-state.Player2.Size.Y {
+			slog.Debug("Player2 paddle hit!")
 			state.Ball.Pos.X = (posXBound - 1) - (state.Ball.Pos.X - (posXBound - 1))
 			state.Ball.Vel.X = state.Ball.Vel.X * -1.001
 			angleTweak := (state.Ball.Pos.Y - state.Player2.Pos.Y) / (state.Player2.Size.Y / 2)
-			state.Ball.Vel.Y = state.Ball.Vel.Y * angleTweak
+			state.Ball.Vel.Y = angleTweak / 10
 		} else {
+			slog.Debug("Player2 paddle miss...")
 			state.Ball.Pos.X = 0
 			state.Ball.Pos.Y = 0
 			state.Ball.Vel.X = -1

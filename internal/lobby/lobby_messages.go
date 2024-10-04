@@ -36,18 +36,20 @@ type PendingInviteData struct {
 }
 
 type AcceptData struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	GameID string `json:"gameID"`
 }
 
 type AcceptedData struct {
 	Accepter string `json:"accepter"`
-	GameID   string `json:"game_id"`
+	GameID   string `json:"gameID"`
 }
 
 type StartGameData struct {
 	To     string `json:"to"`
-	GameID string `json:"game_id"`
+	From   string `json:"from"`
+	GameID string `json:"gameID"`
 }
 
 type DeclineData struct {

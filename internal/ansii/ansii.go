@@ -2,6 +2,8 @@ package ansii
 
 import (
 	"fmt"
+	"log/slog"
+	"math"
 	"os"
 	"strings"
 
@@ -37,8 +39,8 @@ const (
 )
 
 type Offset struct {
-	X int
-	Y int
+	X float32
+	Y float32
 }
 
 type style struct {
@@ -89,8 +91,8 @@ func RestoreTerm(prev *term.State) error {
 	return term.Restore(fd, prev)
 }
 
-func (s screen) PlaceCursor(offset Offset) ANSI {
-	return ANSI(fmt.Sprintf("\033[%d;%dH", offset.Y, offset.X))
+func (s screen) PlaceCursor(X, Y int) ANSI {
+	return ANSI(fmt.Sprintf("\033[%d;%dH", Y, X))
 }
 
 var (
@@ -105,31 +107,34 @@ var (
 // Blocks that would be placed off screen are clipped.
 func DrawBox(builder *strings.Builder, offset Offset, height int, width int, style ANSI) {
 	builder.WriteString(string(style))
-	for hIdx := 0; hIdx < height; hIdx++ {
-
+	for hIdx := range height {
 		if hIdx == 0 || hIdx == height-1 {
-			for wIdx := 0; wIdx < width; wIdx++ {
-				DrawPixel(builder, Offset{X: offset.X + wIdx, Y: offset.Y + hIdx})
+			for wIdx := range width {
+				drawPixel(builder, offset.X+float32(wIdx), offset.Y+float32(hIdx))
 			}
 		} else {
-			DrawPixel(builder, Offset{X: offset.X, Y: offset.Y + hIdx})
-			DrawPixel(builder, Offset{X: offset.X + width - 1, Y: offset.Y + hIdx})
+			drawPixel(builder, offset.X, offset.Y+float32(hIdx))
+			drawPixel(builder, offset.X+float32(width-1), offset.Y+float32(hIdx))
 		}
 	}
 	builder.WriteString(string(Styles.Reset))
 	return
 }
 
-func DrawPixel(builder *strings.Builder, offset Offset) {
+func drawPixel(builder *strings.Builder, offsetX, offsetY float32) {
 	termWidth, termHeight := GetTermSize()
-	if offset.X > termWidth || offset.Y > termHeight || offset.X < 0 || offset.Y < 0 {
-		return
-	}
-	builder.WriteString(string(Screen.PlaceCursor(offset) + ANSI(Blocks.Block)))
+
+	scaledX := math.Floor(float64(offsetX * float32(termWidth)))
+	scaledY := math.Floor(float64(offsetY * float32(termHeight)))
+
+	slog.Debug("positions", slog.Any("x", scaledX), slog.Any("y", scaledY))
+
+	// TODO: Does float to int convertion cause many problems?
+	builder.WriteString(string(Screen.PlaceCursor(int(scaledX), int(scaledY)) + ANSI(Blocks.Block)))
 }
 
 func DrawPixelStyle(builder *strings.Builder, offset Offset, style ANSI) {
 	builder.WriteString(string(style))
-	DrawPixel(builder, offset)
+	drawPixel(builder, offset.X, offset.Y)
 	builder.WriteString(string(Styles.Reset))
 }

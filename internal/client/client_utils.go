@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sshpong/internal/lobby"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 type InterrupterMessage struct {
@@ -16,8 +18,8 @@ type InterrupterMessage struct {
 
 var help = fmt.Errorf("use invite <player name> to invite a player\nchat or / to send a message to the lobby\nq or quit to leave the game")
 
-var red = "\x1b[31m"
-var normal = "\033[0m"
+var Red = "\x1b[31m"
+var Normal = "\033[0m"
 
 func HandleUserInput(args []string, username string) ([]byte, error) {
 	if len(args) == 0 {
@@ -26,11 +28,15 @@ func HandleUserInput(args []string, username string) ([]byte, error) {
 	switch args[0] {
 	case "invite":
 		if args[1] != "" {
-			msg, err := lobby.Marshal(lobby.InviteData{From: username, To: args[1]}, lobby.Invite)
-			if err != nil {
-				slog.Debug("invite message was not properly marshalled", "error", err)
+			if args[1] == username {
+				fmt.Println("You cannot invite yourself to a game ;)")
+			} else {
+				msg, err := lobby.Marshal(lobby.InviteData{From: username, To: args[1]}, lobby.Invite)
+				if err != nil {
+					slog.Debug("invite message was not properly marshalled", "error", err)
+				}
+				return msg, err
 			}
-			return msg, err
 		} else {
 			fmt.Println("Please provide a player to invite ")
 		}
@@ -84,13 +90,15 @@ func HandleInterruptInput(incoming InterrupterMessage, args []string, username s
 	switch incoming.InterruptType {
 	// Respond with yes if you accept game
 	case "invite":
+		slog.Debug("handling invite interrupt")
 		if len(args) < 1 {
 			return []byte{}, nil
 		} else {
 			if strings.ToLower(args[0]) == "y" || strings.ToLower(args[0]) == "yes" {
 				msg, err := lobby.Marshal(lobby.AcceptData{
-					From: username,
-					To:   incoming.Content,
+					From:   username,
+					To:     incoming.Content,
+					GameID: uuid.NewString(),
 				}, lobby.Accept)
 				if err != nil {
 					slog.Debug("accept message was not properly marshalled", "error", err)
@@ -99,20 +107,21 @@ func HandleInterruptInput(incoming InterrupterMessage, args []string, username s
 			}
 		}
 
-	// Disconnect and connect to game
-	case "accepted":
-		msg, err := lobby.Marshal(lobby.DisconnectData{
-			From: incoming.Content,
-		}, lobby.Disconnect)
-		if err != nil {
-			slog.Debug("disconnect message was not properly marshalled", "error", err)
-		}
-		return msg, err
+	// TODO: Do we need this accepted? Disconnect and connect to game
+	// case "accepted":
+	// 	msg, err := lobby.Marshal(lobby.DisconnectData{
+	// 		From: incoming.Content,
+	// 	}, lobby.Disconnect)
+	// 	if err != nil {
+	// 		slog.Debug("disconnect message was not properly marshalled", "error", err)
+	// 	}
+	// 	return msg, err
+
 	case "start_game":
 		msg, err := lobby.Marshal(lobby.StartGameData{
 			To:     "",
 			GameID: incoming.Content,
-		}, lobby.Chat)
+		}, lobby.StartGame)
 		if err != nil {
 			slog.Debug("start game message was not properly marshalled", "error", err)
 		}
@@ -124,7 +133,6 @@ func HandleInterruptInput(incoming InterrupterMessage, args []string, username s
 
 func HandleServerMessage(msg []byte) (InterrupterMessage, error) {
 	header := msg[0]
-
 	switch header {
 	case lobby.Invite:
 		imsg, err := lobby.Unmarshal[lobby.InviteData](msg)
@@ -160,6 +168,7 @@ func HandleServerMessage(msg []byte) (InterrupterMessage, error) {
 		if err != nil {
 			return InterrupterMessage{}, errors.New("Not a properly formatted start game message")
 		}
+		fmt.Println("Your invite was accepted. Press Enter to join game")
 		return InterrupterMessage{
 			InterruptType: "start_game",
 			Content:       sgmsg.GameID,
@@ -206,7 +215,7 @@ func HandleServerMessage(msg []byte) (InterrupterMessage, error) {
 		if err != nil {
 			slog.Debug("Received an indecipherable error message...", slog.Any("msg", msg[1:]))
 		}
-		fmt.Println(red, em.Message, normal)
+		fmt.Println(Red, em.Message, Normal)
 
 	}
 	return InterrupterMessage{}, nil

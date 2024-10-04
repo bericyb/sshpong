@@ -166,9 +166,9 @@ func handleGameInput(bytes []byte) {
 	// Up
 	case 'w':
 		if isPlayer1 {
-			state.Player1.Pos.Y = state.Player1.Pos.Y + 1
+			state.Player1.Pos.Y = state.Player1.Pos.Y - 1
 			v, err := json.Marshal(pong.Vector{
-				X: 0, Y: state.Player1.Pos.Y,
+				X: -50, Y: state.Player1.Pos.Y,
 			})
 			if err != nil {
 				slog.Debug("error marshalling player movement", slog.Any("error", err))
@@ -180,9 +180,9 @@ func handleGameInput(bytes []byte) {
 
 			egress <- update
 		} else {
-			state.Player2.Pos.Y = state.Player2.Pos.Y + 1
+			state.Player2.Pos.Y = state.Player2.Pos.Y - 1
 			v, err := json.Marshal(pong.Vector{
-				X: 0, Y: state.Player2.Pos.Y,
+				X: 50, Y: state.Player2.Pos.Y,
 			})
 			if err != nil {
 				slog.Debug("error marshalling Player2 movement", slog.Any("error", err))
@@ -197,9 +197,9 @@ func handleGameInput(bytes []byte) {
 	// Down
 	case 's':
 		if isPlayer1 {
-			state.Player1.Pos.Y = state.Player1.Pos.Y - 1
+			state.Player1.Pos.Y = state.Player1.Pos.Y + 1
 			v, err := json.Marshal(pong.Vector{
-				X: 0, Y: state.Player1.Pos.Y,
+				X: -50, Y: state.Player1.Pos.Y,
 			})
 			if err != nil {
 				slog.Debug("error marshalling player movement", slog.Any("error", err))
@@ -211,9 +211,9 @@ func handleGameInput(bytes []byte) {
 
 			egress <- update
 		} else {
-			state.Player2.Pos.Y = state.Player2.Pos.Y - 1
+			state.Player2.Pos.Y = state.Player2.Pos.Y + 1
 			v, err := json.Marshal(pong.Vector{
-				X: 0, Y: state.Player2.Pos.Y,
+				X: 50, Y: state.Player2.Pos.Y,
 			})
 			if err != nil {
 				slog.Debug("error marshalling player movement", slog.Any("error", err))
@@ -252,9 +252,9 @@ func handleGameInput(bytes []byte) {
 		// Up
 		case 65:
 			if isPlayer1 {
-				state.Player1.Pos.Y = state.Player1.Pos.Y + 1
+				state.Player1.Pos.Y = state.Player1.Pos.Y - 1
 				v, err := json.Marshal(pong.Vector{
-					X: 0, Y: state.Player1.Pos.Y,
+					X: -50, Y: state.Player1.Pos.Y,
 				})
 				if err != nil {
 					slog.Debug("error marshalling player movement", slog.Any("error", err))
@@ -266,9 +266,9 @@ func handleGameInput(bytes []byte) {
 
 				egress <- update
 			} else {
-				state.Player2.Pos.Y = state.Player2.Pos.Y + 1
+				state.Player2.Pos.Y = state.Player2.Pos.Y - 1
 				v, err := json.Marshal(pong.Vector{
-					X: 0, Y: state.Player2.Pos.Y,
+					X: 50, Y: state.Player2.Pos.Y,
 				})
 				if err != nil {
 					slog.Debug("error marshalling Player2 movement", slog.Any("error", err))
@@ -283,9 +283,9 @@ func handleGameInput(bytes []byte) {
 		// Down
 		case 66:
 			if isPlayer1 {
-				state.Player1.Pos.Y = state.Player1.Pos.Y - 1
+				state.Player1.Pos.Y = state.Player1.Pos.Y + 1
 				v, err := json.Marshal(pong.Vector{
-					X: 0, Y: state.Player1.Pos.Y,
+					X: -50, Y: state.Player1.Pos.Y,
 				})
 				if err != nil {
 					slog.Debug("error marshalling player movement", slog.Any("error", err))
@@ -297,9 +297,9 @@ func handleGameInput(bytes []byte) {
 
 				egress <- update
 			} else {
-				state.Player2.Pos.Y = state.Player2.Pos.Y - 1
+				state.Player2.Pos.Y = state.Player2.Pos.Y + 1
 				v, err := json.Marshal(pong.Vector{
-					X: 0, Y: state.Player2.Pos.Y,
+					X: 50, Y: state.Player2.Pos.Y,
 				})
 				if err != nil {
 					slog.Debug("error marshalling player movement", slog.Any("error", err))
