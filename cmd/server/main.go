@@ -84,9 +84,9 @@ func GamesListen() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer gameListener.Close()
 
 	for {
-		defer gameListener.Close()
 		conn, err := gameListener.Accept()
 		if err != nil {
 			log.Println(err)

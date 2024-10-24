@@ -17,12 +17,6 @@ type GameClient struct {
 	Conn     net.Conn
 }
 
-var player1 GameClient
-var player2 GameClient
-
-var ingress chan StateUpdate
-var egress chan StateUpdate
-
 const posXBound = 52
 const negXBound = posXBound * -1
 const posYBound = 50
@@ -30,8 +24,11 @@ const negYBound = posYBound * -1
 
 func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 
-	egress = make(chan StateUpdate)
-	ingress = make(chan StateUpdate)
+	var player1 GameClient
+	var player2 GameClient
+
+	egress := make(chan StateUpdate)
+	ingress := make(chan StateUpdate)
 
 	player1 = GameClient{
 		Username: username1,
@@ -75,17 +72,17 @@ func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 	broadcastUpdate(StateUpdate{
 		FieldPath: "Message",
 		Value:     []byte("Ready..."),
-	})
+	}, player1, player2)
 	time.Sleep(1 * time.Second)
 	broadcastUpdate(StateUpdate{
 		FieldPath: "Message",
 		Value:     []byte("Set..."),
-	})
+	}, player1, player2)
 	time.Sleep(1 * time.Second)
 	broadcastUpdate(StateUpdate{
 		FieldPath: "Message",
 		Value:     []byte("Go!"),
-	})
+	}, player1, player2)
 	time.Sleep(1 * time.Second)
 	bv := float32(rand.Intn(2)*2 - 1)
 
@@ -124,10 +121,10 @@ func StartGame(conn1, conn2 net.Conn, username1, username2 string) {
 			},
 		},
 	}
-	go gameLoop(&state)
+	go gameLoop(&state, ingress, egress, player1, player2)
 }
 
-func gameLoop(state *GameState) {
+func gameLoop(state *GameState, ingress, egress chan (StateUpdate), player1, player2 GameClient) {
 	// Player 1 read loop
 	go func() {
 		for {
@@ -169,7 +166,7 @@ func gameLoop(state *GameState) {
 	go func() {
 		for {
 			msg := <-egress
-			broadcastUpdate(msg)
+			broadcastUpdate(msg, player1, player2)
 			if msg.FieldPath == "Winner" {
 				return
 			}
@@ -191,7 +188,7 @@ func gameLoop(state *GameState) {
 			}
 
 		case _ = <-ticker.C:
-			update := process(state)
+			update := process(state, player1, player2)
 			egress <- update
 			if update.FieldPath == "Winner" {
 				slog.Debug("Closing game loop")
@@ -201,7 +198,7 @@ func gameLoop(state *GameState) {
 	}
 }
 
-func process(state *GameState) StateUpdate {
+func process(state *GameState, player1, player2 GameClient) StateUpdate {
 	// Move players
 	// Check if player edge is out of bounds
 	//	If out of bounds reset velocity to zero and position to edge
@@ -350,7 +347,7 @@ func handlePlayerRequest(update StateUpdate, state *GameState) error {
 	return nil
 }
 
-func broadcastUpdate(update StateUpdate) error {
+func broadcastUpdate(update StateUpdate, player1, player2 GameClient) error {
 	msg, err := json.Marshal(update)
 	if err != nil {
 		return err
