@@ -322,7 +322,9 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte, error) 
 		}
 		return Client{}, msgOut, err
 	}
+	fmt.Println("Loading lobby")
 	_, ok := l.lobbyMembers.Load(n.Name)
+	fmt.Println("past that")
 	if ok {
 		msg, err := Marshal(ErrorData{
 			Message: "Sorry that name is already taken, please try a different name",
