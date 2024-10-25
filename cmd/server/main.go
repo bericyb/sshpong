@@ -58,23 +58,22 @@ func LobbyListen() {
 			client, msgOut, err := l.InitialConnectionHandler(conn)
 			if err != nil {
 				conn.Write(msgOut)
-				return
-			}
-			fmt.Println("new client", client)
-
-			_, err = conn.Write(msgOut)
-			if err != nil {
-				slog.Debug("error writing to new player... disconnecting")
-				// msg, err := lobby.Marshal(lobby.DisconnectData{
-				// 	From: client.Username,
-				// }, lobby.Disconnect)
+			} else {
+				fmt.Println("new client", client)
+				_, err = conn.Write(msgOut)
 				if err != nil {
-					slog.Error("error marshalling disconnect message on player connect")
+					slog.Debug("error writing to new player... disconnecting")
+					msg, err := lobby.Marshal(lobby.DisconnectData{
+						From: client.Username,
+					}, lobby.Disconnect)
+					if err != nil {
+						slog.Error("error marshalling disconnect message on player connect")
+					}
+					l.BroadcastToLobby(msg)
 				}
-				// l.BroadcastToLobby(msg)
-			}
 
-			go l.HandleLobbyConnection(client)
+				go l.HandleLobbyConnection(client)
+			}
 		}()
 	}
 }
