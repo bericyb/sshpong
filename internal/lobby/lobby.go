@@ -314,10 +314,10 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte, error) 
 	if err != nil {
 		slog.Debug("error unmarshalling name message:", "error", err.Error(), "message", msg[1:nb])
 
-		msgOut, err := Marshal(ErrorData{
+		msgOut, merr := Marshal(ErrorData{
 			Message: "incorrectly formatted username in name message",
 		}, Error)
-		if err != nil {
+		if merr != nil {
 			slog.Error("error marshalling error message for incorrectly formatted username")
 		}
 		return Client{}, msgOut, err
@@ -326,13 +326,13 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte, error) 
 	_, ok := l.lobbyMembers.Load(n.Name)
 	fmt.Println("past that")
 	if ok {
-		msg, err := Marshal(ErrorData{
+		msg, merr := Marshal(ErrorData{
 			Message: "Sorry that name is already taken, please try a different name",
 		}, Error)
-		if err != nil {
+		if merr != nil {
 			slog.Error("error marshalling error on name already taken msg")
 		}
-		return Client{}, msg, err
+		return Client{}, msg, fmt.Errorf("unoriginal name :p")
 	}
 	h, err := Marshal(ConnectData{
 		From: n.Name,
