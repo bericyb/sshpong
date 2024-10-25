@@ -60,6 +60,7 @@ func LobbyListen() {
 				conn.Write(msgOut)
 				return
 			}
+			fmt.Println("new client", client)
 
 			_, err = conn.Write(msgOut)
 			if err != nil {
