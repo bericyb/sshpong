@@ -303,7 +303,7 @@ func (l *Lobby) BroadcastToLobby(bytes []byte) {
 		l.lobbyMembers.Delete(player)
 	}
 }
-func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte) {
+func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte, error) {
 	msg := make([]byte, 256)
 	nb, err := conn.Read(msg)
 	if err != nil {
@@ -320,7 +320,7 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte) {
 		if err != nil {
 			slog.Error("error marshalling error message for incorrectly formatted username")
 		}
-		return Client{}, msgOut
+		return Client{}, msgOut, err
 	}
 	_, ok := l.lobbyMembers.Load(n.Name)
 	if ok {
@@ -330,14 +330,14 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte) {
 		if err != nil {
 			slog.Error("error marshalling error on name already taken msg")
 		}
-		return Client{}, msg
+		return Client{}, msg, err
 	}
 	h, err := Marshal(ConnectData{
 		From: n.Name,
 	}, Connect)
 	if err != nil {
 		slog.Debug("error marshalling broadcast connect message on player connect", "error", err)
-		return Client{Username: n.Name, Conn: conn}, h
+		return Client{Username: n.Name, Conn: conn}, h, err
 	}
 	l.BroadcastToLobby(h)
 
@@ -360,5 +360,5 @@ func (l *Lobby) InitialConnectionHandler(conn net.Conn) (Client, []byte) {
 
 	l.lobbyMembers.Store(n.Name, client)
 
-	return client, msgOut
+	return client, msgOut, err
 }
