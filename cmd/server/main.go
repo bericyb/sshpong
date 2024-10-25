@@ -57,9 +57,10 @@ func LobbyListen() {
 		go func() {
 			client, msgOut, err := l.InitialConnectionHandler(conn)
 			if err != nil {
+				fmt.Println("what?")
 				conn.Write(msgOut)
 			} else {
-				fmt.Println("new client", client)
+				fmt.Println("new client", client, err)
 				_, err = conn.Write(msgOut)
 				if err != nil {
 					slog.Debug("error writing to new player... disconnecting")
