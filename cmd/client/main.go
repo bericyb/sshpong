@@ -64,7 +64,7 @@ func main() {
 		for {
 			n, err := os.Stdin.Read(buf)
 			if err != nil {
-				log.Panic("Bro your input wack as fuck")
+				log.Panic("Bro your input wack as @#$%")
 			}
 
 			input := string(buf[:n-1])
